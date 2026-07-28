@@ -85,6 +85,10 @@ void virtuappu_mode1_composite_line(
     uint8_t obj_priority[MODE1_GBA_WIDTH],
     uint16_t dispcnt);
 void virtuappu_mode1_render_frame(const PPUMemory *ppu);
+/* Sub-pixel re-render of OAM affine sprites into a (240*scale x 160*scale)
+ * buffer. Called by the PC port at internal-render-scale > 1 after the
+ * standard frame has been S*S nearest-replicated into `dst`. */
+void virtuappu_mode1_render_affine_obj_overlay(uint32_t *dst, int dst_w, int dst_h, int scale);
 
 #ifdef __cplusplus
 }
