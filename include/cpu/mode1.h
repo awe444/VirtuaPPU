@@ -12,9 +12,51 @@ extern "C" {
 typedef void (*virtuappu_mode1_pre_line_fn)(int line);
 extern virtuappu_mode1_pre_line_fn virtuappu_mode1_pre_line_callback;
 
+/* Map-source override for text BG layers (non-GBA extension).
+ *
+ * A GBA text BG reads its tilemap from a 32x32-entry VRAM screenblock and
+ * wraps modulo the map size, which caps the visible region at the hardware
+ * window regardless of how much world data exists. When a caller already
+ * holds a complete, room-sized tilemap it can bind it here instead: the
+ * layer then samples `map` directly at an absolute pixel origin, with no
+ * screenblock and no wrap, so the viewport can be any width or height the
+ * frame buffer allows.
+ *
+ * Everything downstream of the tilemap fetch — character data, palette,
+ * flip bits, priority, mosaic, blending — is unchanged, so with
+ * origin_x/origin_y set to the same scroll position the hardware path
+ * would produce, output is bit-identical to the screenblock path. That
+ * equivalence is the intended way to validate a binding.
+ *
+ * Tiles outside [0,width_tiles) x [0,height_tiles) render as transparent
+ * (backdrop shows through), matching how an undersized room letterboxes.
+ *
+ * Bindings are per BG index and persist until changed; pass NULL to
+ * restore normal screenblock behaviour for that layer. */
+typedef struct {
+    const uint16_t *map;  /* row-major tilemap entries, GBA text-BG format */
+    int stride;           /* entries per row (may exceed width_tiles)      */
+    int width_tiles;      /* valid map extent, in 8x8 tiles                */
+    int height_tiles;
+    int origin_x;         /* pixel coordinate of screen column 0 */
+    int origin_y;         /* pixel coordinate of screen line 0   */
+} VirtuaPPUMode1MapSource;
+
+void virtuappu_mode1_set_map_source(int bg_index, const VirtuaPPUMode1MapSource *source);
+void virtuappu_mode1_clear_map_sources(void);
+
+/* Rendered viewport. GBA-native by default; a host that drives the PPU
+ * with non-hardware BG sources (see VirtuaPPUMode1MapSource) can override
+ * these at build time to render a larger area. Must not exceed
+ * VIRTUAPPU_MAX_FRAME_WIDTH/HEIGHT. */
+#ifndef MODE1_GBA_WIDTH
+#define MODE1_GBA_WIDTH 240
+#endif
+#ifndef MODE1_GBA_HEIGHT
+#define MODE1_GBA_HEIGHT 160
+#endif
+
 enum {
-    MODE1_GBA_WIDTH = 240,
-    MODE1_GBA_HEIGHT = 160,
     MODE1_GBA_BG_COUNT = 4,
     MODE1_GBA_OAM_COUNT = 128,
     MODE1_IO_MEM_SIZE = 0x400,

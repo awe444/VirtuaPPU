@@ -1,6 +1,7 @@
 #include "cpu/mode1.h"
 
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -260,6 +261,35 @@ uint32_t virtuappu_mode1_rgb555_to_abgr8888(uint16_t color)
     return 0xFF000000u | ((uint32_t)b << 16u) | ((uint32_t)g << 8u) | (uint32_t)r;
 }
 
+int mode1_map_source_audit = 0;
+unsigned long mode1_map_source_audit_total = 0;
+unsigned long mode1_map_source_audit_bad = 0;
+
+static VirtuaPPUMode1MapSource mode1_map_sources[MODE1_GBA_BG_COUNT];
+static bool mode1_map_source_active[MODE1_GBA_BG_COUNT];
+
+void virtuappu_mode1_set_map_source(int bg_index, const VirtuaPPUMode1MapSource *source)
+{
+    if (bg_index < 0 || bg_index >= MODE1_GBA_BG_COUNT) {
+        return;
+    }
+    if (source == NULL || source->map == NULL || source->stride <= 0 ||
+        source->width_tiles <= 0 || source->height_tiles <= 0) {
+        mode1_map_source_active[bg_index] = false;
+        return;
+    }
+    mode1_map_sources[bg_index] = *source;
+    mode1_map_source_active[bg_index] = true;
+}
+
+void virtuappu_mode1_clear_map_sources(void)
+{
+    int i;
+    for (i = 0; i < MODE1_GBA_BG_COUNT; ++i) {
+        mode1_map_source_active[i] = false;
+    }
+}
+
 void virtuappu_mode1_render_text_bg_line(int bg_index, int line, uint32_t *line_buffer, uint8_t *priority_buffer)
 {
     uint16_t bgcnt = virtuappu_mode1_io_read16((uint16_t)(MODE1_IO_BG0CNT + bg_index * 2));
@@ -277,30 +307,75 @@ void virtuappu_mode1_render_text_bg_line(int bg_index, int line, uint32_t *line_
     mosaic_on = mosaic_on && getenv("TMC_ENABLE_MOSAIC") != NULL;
     int mosaic_h = mosaic_on ? (int)((mosaic_reg & 0x0Fu) + 1u) : 1;
     int mosaic_v = mosaic_on ? (int)(((mosaic_reg >> 4u) & 0x0Fu) + 1u) : 1;
+    const VirtuaPPUMode1MapSource *map_src =
+        mode1_map_source_active[bg_index] ? &mode1_map_sources[bg_index] : NULL;
     int eff_line = (line / mosaic_v) * mosaic_v;
-    int src_y = (eff_line + scroll_y) % (map_height_tiles * 8);
+    /* Map-source layers address an absolute room position and do not wrap;
+     * screenblock layers wrap modulo the hardware map size. */
+    int src_y = map_src ? (eff_line + map_src->origin_y)
+                        : ((eff_line + scroll_y) % (map_height_tiles * 8));
     int tile_row = src_y / 8;
     int pixel_y = src_y % 8;
     int x;
 
+    if (map_src && (src_y < 0 || tile_row >= map_src->height_tiles)) {
+        return; /* line lies outside the room: leave backdrop */
+    }
+
     for (x = 0; x < MODE1_GBA_WIDTH; ++x) {
         int eff_x = (x / mosaic_h) * mosaic_h;
-        int src_x = (eff_x + scroll_x) % (map_width_tiles * 8);
+        int src_x = map_src ? (eff_x + map_src->origin_x)
+                            : ((eff_x + scroll_x) % (map_width_tiles * 8));
         int tile_col = src_x / 8;
         int pixel_x = src_x % 8;
-        int screen_block_x = tile_col / 32;
-        int screen_block_y = tile_row / 32;
-        int screen_block_index = screen_block_x + screen_block_y * (map_width_tiles / 32);
-        int local_col = tile_col % 32;
-        int local_row = tile_row % 32;
-        uint32_t map_addr = screen_base + (uint32_t)screen_block_index * 0x800u + (uint32_t)(local_row * 32 + local_col) * 2u;
         Mode1TilemapEntry tile_entry;
         int tile_pixel_x;
         int tile_pixel_y;
         uint8_t color_index;
         uint16_t rgb555;
 
-        tile_entry.raw = (uint16_t)mode1_memory.vram[map_addr] | ((uint16_t)mode1_memory.vram[map_addr + 1u] << 8u);
+        if (map_src) {
+            if (src_x < 0 || tile_col >= map_src->width_tiles) {
+                continue; /* column outside the room */
+            }
+            tile_entry.raw = map_src->map[(size_t)tile_row * (size_t)map_src->stride +
+                                          (size_t)tile_col];
+            if (mode1_map_source_audit) {
+                int sb_y = (eff_line + scroll_y) % (map_height_tiles * 8);
+                int sb_x = (eff_x + scroll_x) % (map_width_tiles * 8);
+                int r = sb_y / 8, c = sb_x / 8;
+                int bi = (c / 32) + (r / 32) * (map_width_tiles / 32);
+                uint32_t a = screen_base + (uint32_t)bi * 0x800u +
+                             (uint32_t)((r % 32) * 32 + (c % 32)) * 2u;
+                uint16_t hw = (uint16_t)mode1_memory.vram[a] |
+                              ((uint16_t)mode1_memory.vram[a + 1u] << 8u);
+                mode1_map_source_audit_total++;
+                if (hw != tile_entry.raw) {
+                    if (mode1_map_source_audit_bad < 6) {
+                        fprintf(stderr,
+                                "[mapsrc-audit] bg=%d line=%d x=%d origin=(%d,%d) "
+                                "hofs=%d vofs=%d map[%d,%d]=0x%04X hw[%d,%d]=0x%04X "
+                                "expect_col=%d expect_row=%d\n",
+                                bg_index, line, x, map_src->origin_x, map_src->origin_y,
+                                scroll_x, scroll_y, tile_row, tile_col, tile_entry.raw,
+                                r, c, hw,
+                                (map_src->origin_x >> 3) + c - (scroll_x >> 3),
+                                (map_src->origin_y >> 3) + r - (scroll_y >> 3));
+                    }
+                    mode1_map_source_audit_bad++;
+                }
+            }
+        } else {
+            int screen_block_x = tile_col / 32;
+            int screen_block_y = tile_row / 32;
+            int screen_block_index = screen_block_x + screen_block_y * (map_width_tiles / 32);
+            int local_col = tile_col % 32;
+            int local_row = tile_row % 32;
+            uint32_t map_addr = screen_base + (uint32_t)screen_block_index * 0x800u +
+                                (uint32_t)(local_row * 32 + local_col) * 2u;
+            tile_entry.raw = (uint16_t)mode1_memory.vram[map_addr] |
+                             ((uint16_t)mode1_memory.vram[map_addr + 1u] << 8u);
+        }
         tile_pixel_x = mode1_tile_hflip(tile_entry) ? (7 - pixel_x) : pixel_x;
         tile_pixel_y = mode1_tile_vflip(tile_entry) ? (7 - pixel_y) : pixel_y;
 
