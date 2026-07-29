@@ -45,6 +45,28 @@ typedef struct {
 void virtuappu_mode1_set_map_source(int bg_index, const VirtuaPPUMode1MapSource *source);
 void virtuappu_mode1_clear_map_sources(void);
 
+/* Window bounds override (non-GBA extension).
+ *
+ * WIN0H/WIN1H pack each edge into 8 bits, so no window can describe an
+ * edge past 255 — a hard ceiling for any viewport wider than that. A host
+ * rendering wider can push the true bounds here instead; when an override
+ * is set for a window, the PPU uses it in place of the packed registers.
+ *
+ * Semantics otherwise match the hardware exactly, including the
+ * left > right / top > bottom wrap-around behaviour, so an override
+ * carrying the same values the registers held renders identically.
+ *
+ * Pass NULL to return a window to register-decoded bounds. */
+typedef struct {
+    int left;
+    int right;
+    int top;
+    int bottom;
+} VirtuaPPUMode1WindowBounds;
+
+void virtuappu_mode1_set_window_bounds(int window_index, const VirtuaPPUMode1WindowBounds *bounds);
+void virtuappu_mode1_clear_window_bounds(void);
+
 /* Rendered viewport. GBA-native by default; a host that drives the PPU
  * with non-hardware BG sources (see VirtuaPPUMode1MapSource) can override
  * these at build time to render a larger area. Must not exceed

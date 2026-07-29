@@ -268,6 +268,28 @@ unsigned long mode1_map_source_audit_bad = 0;
 static VirtuaPPUMode1MapSource mode1_map_sources[MODE1_GBA_BG_COUNT];
 static bool mode1_map_source_active[MODE1_GBA_BG_COUNT];
 
+static VirtuaPPUMode1WindowBounds mode1_window_bounds[2];
+static bool mode1_window_bounds_active[2];
+
+void virtuappu_mode1_set_window_bounds(int window_index, const VirtuaPPUMode1WindowBounds *bounds)
+{
+    if (window_index < 0 || window_index > 1) {
+        return;
+    }
+    if (bounds == NULL) {
+        mode1_window_bounds_active[window_index] = false;
+        return;
+    }
+    mode1_window_bounds[window_index] = *bounds;
+    mode1_window_bounds_active[window_index] = true;
+}
+
+void virtuappu_mode1_clear_window_bounds(void)
+{
+    mode1_window_bounds_active[0] = false;
+    mode1_window_bounds_active[1] = false;
+}
+
 void virtuappu_mode1_set_map_source(int bg_index, const VirtuaPPUMode1MapSource *source)
 {
     if (bg_index < 0 || bg_index >= MODE1_GBA_BG_COUNT) {
@@ -600,18 +622,18 @@ void virtuappu_mode1_composite_line(
     uint16_t winout = virtuappu_mode1_io_read16(MODE1_IO_WINOUT);
     uint16_t win0h = virtuappu_mode1_io_read16(MODE1_IO_WIN0H);
     uint16_t win0v = virtuappu_mode1_io_read16(MODE1_IO_WIN0V);
-    int win0_left = win0h >> 8u;
-    int win0_right = win0h & 0xFFu;
-    int win0_top = win0v >> 8u;
-    int win0_bottom = win0v & 0xFFu;
+    int win0_left = mode1_window_bounds_active[0] ? mode1_window_bounds[0].left : (int)(win0h >> 8u);
+    int win0_right = mode1_window_bounds_active[0] ? mode1_window_bounds[0].right : (int)(win0h & 0xFFu);
+    int win0_top = mode1_window_bounds_active[0] ? mode1_window_bounds[0].top : (int)(win0v >> 8u);
+    int win0_bottom = mode1_window_bounds_active[0] ? mode1_window_bounds[0].bottom : (int)(win0v & 0xFFu);
     bool win0_h_wrap;
     bool win0_v_active;
     uint16_t win1h = virtuappu_mode1_io_read16(MODE1_IO_WIN1H);
     uint16_t win1v = virtuappu_mode1_io_read16(MODE1_IO_WIN1V);
-    int win1_left = win1h >> 8u;
-    int win1_right = win1h & 0xFFu;
-    int win1_top = win1v >> 8u;
-    int win1_bottom = win1v & 0xFFu;
+    int win1_left = mode1_window_bounds_active[1] ? mode1_window_bounds[1].left : (int)(win1h >> 8u);
+    int win1_right = mode1_window_bounds_active[1] ? mode1_window_bounds[1].right : (int)(win1h & 0xFFu);
+    int win1_top = mode1_window_bounds_active[1] ? mode1_window_bounds[1].top : (int)(win1v >> 8u);
+    int win1_bottom = mode1_window_bounds_active[1] ? mode1_window_bounds[1].bottom : (int)(win1v & 0xFFu);
     bool win1_h_wrap;
     bool win1_v_active;
     uint8_t win0_ctrl = (uint8_t)(winin & 0x3Fu);
