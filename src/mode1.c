@@ -346,6 +346,14 @@ void virtuappu_mode1_set_map_source(int bg_index, const VirtuaPPUMode1MapSource 
     mode1_map_source_active[bg_index] = true;
 }
 
+bool virtuappu_mode1_has_map_source(int bg_index)
+{
+    if (bg_index < 0 || bg_index >= MODE1_GBA_BG_COUNT) {
+        return false;
+    }
+    return mode1_map_source_active[bg_index];
+}
+
 void virtuappu_mode1_clear_map_sources(void)
 {
     int i;

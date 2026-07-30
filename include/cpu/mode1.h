@@ -44,6 +44,9 @@ typedef struct {
 
 void virtuappu_mode1_set_map_source(int bg_index, const VirtuaPPUMode1MapSource *source);
 void virtuappu_mode1_clear_map_sources(void);
+/* Whether a map source is currently bound for a layer. A layer without one
+ * is reading a hardware screenblock and so cannot cover more than 256 px. */
+bool virtuappu_mode1_has_map_source(int bg_index);
 
 /* Window bounds override (non-GBA extension).
  *
