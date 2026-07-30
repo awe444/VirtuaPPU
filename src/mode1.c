@@ -268,6 +268,39 @@ unsigned long mode1_map_source_audit_bad = 0;
 static VirtuaPPUMode1MapSource mode1_map_sources[MODE1_GBA_BG_COUNT];
 static bool mode1_map_source_active[MODE1_GBA_BG_COUNT];
 
+static int mode1_obj_offset_x = 0;
+static int mode1_obj_offset_y = 0;
+
+void virtuappu_mode1_set_obj_offset(int dx, int dy)
+{
+    mode1_obj_offset_x = dx;
+    mode1_obj_offset_y = dy;
+}
+
+static VirtuaPPUMode1BgClip mode1_bg_clips[MODE1_GBA_BG_COUNT];
+static bool mode1_bg_clip_active[MODE1_GBA_BG_COUNT];
+
+void virtuappu_mode1_set_bg_clip(int bg_index, const VirtuaPPUMode1BgClip *clip)
+{
+    if (bg_index < 0 || bg_index >= MODE1_GBA_BG_COUNT) {
+        return;
+    }
+    if (clip == NULL || clip->content_width <= 0) {
+        mode1_bg_clip_active[bg_index] = false;
+        return;
+    }
+    mode1_bg_clips[bg_index] = *clip;
+    mode1_bg_clip_active[bg_index] = true;
+}
+
+void virtuappu_mode1_clear_bg_clips(void)
+{
+    int i;
+    for (i = 0; i < MODE1_GBA_BG_COUNT; ++i) {
+        mode1_bg_clip_active[i] = false;
+    }
+}
+
 static VirtuaPPUMode1WindowBounds mode1_window_bounds[2];
 static bool mode1_window_bounds_active[2];
 
@@ -344,10 +377,21 @@ void virtuappu_mode1_render_text_bg_line(int bg_index, int line, uint32_t *line_
         return; /* line lies outside the room: leave backdrop */
     }
 
+    const VirtuaPPUMode1BgClip *clip =
+        mode1_bg_clip_active[bg_index] ? &mode1_bg_clips[bg_index] : NULL;
+
     for (x = 0; x < MODE1_GBA_WIDTH; ++x) {
         int eff_x = (x / mosaic_h) * mosaic_h;
-        int src_x = map_src ? (eff_x + map_src->origin_x)
-                            : ((eff_x + scroll_x) % (map_width_tiles * 8));
+        int clipped_x = eff_x;
+        int src_x;
+        if (clip != NULL) {
+            clipped_x = eff_x - clip->offset_x;
+            if (clipped_x < 0 || clipped_x >= clip->content_width) {
+                continue; /* outside the layer's content: show backdrop */
+            }
+        }
+        src_x = map_src ? (clipped_x + map_src->origin_x)
+                        : ((clipped_x + scroll_x) % (map_width_tiles * 8));
         int tile_col = src_x / 8;
         int pixel_x = src_x % 8;
         Mode1TilemapEntry tile_entry;
@@ -483,6 +527,7 @@ void virtuappu_mode1_render_obj_line(int line, bool obj_1d, uint32_t *line_buffe
         if (obj_y >= MODE1_GBA_HEIGHT) {
             obj_y -= 256;
         }
+        obj_y += mode1_obj_offset_y;
         if (line < obj_y || line >= obj_y + bounds_height) {
             continue;
         }
@@ -491,6 +536,9 @@ void virtuappu_mode1_render_obj_line(int line, bool obj_1d, uint32_t *line_buffe
         if (obj_x >= MODE1_GBA_WIDTH) {
             obj_x -= 512;
         }
+        /* Applied after the hardware wrap fixups so the offset shifts the
+         * resolved on-screen position, not the encoded field. */
+        obj_x += mode1_obj_offset_x;
 
         bpp8 = mode1_oam_bpp8(attr);
         priority = mode1_oam_priority(attr);

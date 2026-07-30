@@ -67,6 +67,39 @@ typedef struct {
 void virtuappu_mode1_set_window_bounds(int window_index, const VirtuaPPUMode1WindowBounds *bounds);
 void virtuappu_mode1_clear_window_bounds(void);
 
+/* Layer clip + offset (non-GBA extension).
+ *
+ * A text BG wraps modulo its map size, so content authored for a 256-px
+ * map cannot simply be shifted right on a wider display: the wrapped
+ * columns reappear on the opposite edge instead of leaving a border. This
+ * lets a host say "this layer's content is `content_width` pixels wide and
+ * starts at `offset_x`" — inside that span the layer samples as if the
+ * screen began at offset_x, and outside it the layer contributes nothing,
+ * so the backdrop shows through.
+ *
+ * Unlike a map source this works with the layer's normal screenblock
+ * fetch, which matters for content loaded straight into VRAM rather than
+ * staged in a buffer the host could hand over.
+ *
+ * Pass NULL to remove a clip. */
+typedef struct {
+    int offset_x;
+    int content_width;
+} VirtuaPPUMode1BgClip;
+
+void virtuappu_mode1_set_bg_clip(int bg_index, const VirtuaPPUMode1BgClip *clip);
+void virtuappu_mode1_clear_bg_clips(void);
+
+/* Global OBJ offset (non-GBA extension).
+ *
+ * Shifts every sprite by (dx, dy) at composite time. Its purpose is to keep
+ * sprites with a shifted BG layer: a host centring 240-wide UI content on a
+ * wider display moves the backgrounds, and the sprites drawn on top of them
+ * (menu cursors, item icons, the title sword) have to travel the same
+ * distance or they detach from what they belong to. Zero restores hardware
+ * behaviour. */
+void virtuappu_mode1_set_obj_offset(int dx, int dy);
+
 /* Rendered viewport. GBA-native by default; a host that drives the PPU
  * with non-hardware BG sources (see VirtuaPPUMode1MapSource) can override
  * these at build time to render a larger area. Must not exceed
