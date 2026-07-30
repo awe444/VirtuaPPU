@@ -406,7 +406,15 @@ void virtuappu_mode1_render_text_bg_line(int bg_index, int line, uint32_t *line_
             }
             tile_entry.raw = map_src->map[(size_t)tile_row * (size_t)map_src->stride +
                                           (size_t)tile_col];
-            if (mode1_map_source_audit) {
+            /* The audit is an equivalence check against the hardware
+             * path, so it is only meaningful at GBA-native width. Wider
+             * than that the engine still streams a 32-tile screenblock, but
+             * from a camera the wide build has clamped differently, so the
+             * buffer-column-to-map-column relation this compares against no
+             * longer holds — and beyond the streamed window there is no
+             * data at all. Report nothing rather than a misleading number;
+             * `--mapsource-audit` is a 240 regression gate. */
+            if (mode1_map_source_audit && MODE1_GBA_WIDTH <= 240) {
                 int sb_y = (eff_line + scroll_y) % (map_height_tiles * 8);
                 int sb_x = (eff_x + scroll_x) % (map_width_tiles * 8);
                 int r = sb_y / 8, c = sb_x / 8;
