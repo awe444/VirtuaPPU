@@ -268,6 +268,15 @@ unsigned long mode1_map_source_audit_bad = 0;
 static VirtuaPPUMode1MapSource mode1_map_sources[MODE1_GBA_BG_COUNT];
 static bool mode1_map_source_active[MODE1_GBA_BG_COUNT];
 
+static int mode1_obj_clip_left = 0;
+static int mode1_obj_clip_right = MODE1_GBA_WIDTH;
+
+void virtuappu_mode1_set_obj_clip(int left, int right)
+{
+    mode1_obj_clip_left = (left < 0) ? 0 : left;
+    mode1_obj_clip_right = (right > MODE1_GBA_WIDTH) ? MODE1_GBA_WIDTH : right;
+}
+
 static int mode1_obj_offset_x = 0;
 static int mode1_obj_offset_y = 0;
 
@@ -569,6 +578,9 @@ void virtuappu_mode1_render_obj_line(int line, bool obj_1d, uint32_t *line_buffe
 
         for (sx = 0; sx < bounds_width; ++sx) {
             int screen_x = obj_x + sx;
+            if (screen_x < mode1_obj_clip_left || screen_x >= mode1_obj_clip_right) {
+                continue; /* border, not world: hardware would never draw here */
+            }
             int tex_x;
             int tex_y;
             int tile_row;

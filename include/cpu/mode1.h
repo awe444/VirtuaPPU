@@ -100,6 +100,15 @@ void virtuappu_mode1_clear_bg_clips(void);
  * behaviour. */
 void virtuappu_mode1_set_obj_offset(int dx, int dy);
 
+/* OBJ horizontal clip (non-GBA extension).
+ *
+ * Suppresses sprite pixels outside [left, right). On hardware the screen is
+ * exactly the world view, so a sprite is either on it or off it; once the
+ * viewport can be wider than the room being shown, the leftover columns are
+ * border rather than world, and a sprite standing in them is an object that
+ * hardware would simply never have drawn. Defaults to the full frame. */
+void virtuappu_mode1_set_obj_clip(int left, int right);
+
 /* Rendered viewport. GBA-native by default; a host that drives the PPU
  * with non-hardware BG sources (see VirtuaPPUMode1MapSource) can override
  * these at build time to render a larger area. Must not exceed
