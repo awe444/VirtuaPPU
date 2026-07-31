@@ -111,6 +111,12 @@ typedef struct {
 void virtuappu_mode1_set_bg_clip(int bg_index, const VirtuaPPUMode1BgClip *clip);
 void virtuappu_mode1_clear_bg_clips(void);
 
+/* The clip currently on `bg_index`, or NULL if none. Exists so the affine
+ * path in mode 2 can honour the same clip the text path does — an affine
+ * layer is as much a 240x160-authored surface as a text one when it carries
+ * the title screen's sword. */
+const VirtuaPPUMode1BgClip *virtuappu_mode1_get_bg_clip(int bg_index);
+
 /* Global OBJ offset (non-GBA extension).
  *
  * Shifts every sprite by (dx, dy) at composite time. Its purpose is to keep

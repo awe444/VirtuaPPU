@@ -82,9 +82,42 @@ void virtuappu_mode2_render_frame(const PPUMemory *ppu)
                 ref_y |= (int32_t)0xF0000000u;
             }
 
-            for (x = 0; x < MODE1_GBA_WIDTH; ++x) {
-                int32_t tex_x = ref_x + pb * line + pa * x;
-                int32_t tex_y = ref_y + pd * line + pc * x;
+            /* Honour the same clip the text path honours.
+             *
+             * An affine layer is as much a 240x160-authored surface as a text
+             * one — on the title screen it carries the sword, while the rest
+             * of the artwork is on BG0/BG1 and is clipped and centred. Left
+             * out, the sword stays where a 240x160 screen would have put it
+             * while everything around it moves, and its off-map edges wrap
+             * into the border.
+             *
+             * Shifting an affine image is not a pixel shift: what moves is
+             * the texture coordinate the transform starts from. Sampling at
+             * screen (x - offset_x, line - offset_y) instead of (x, line) is
+             * the whole of it, and it stays correct under rotation and scale
+             * because the transform is applied to the shifted coordinate
+             * rather than to the result. */
+            {
+                const VirtuaPPUMode1BgClip *clip = virtuappu_mode1_get_bg_clip(2);
+                int clip_left = 0;
+                int clip_right = MODE1_GBA_WIDTH;
+                int rel_line = line;
+
+                if (clip != NULL) {
+                    rel_line = line - clip->offset_y;
+                    if (rel_line < 0 || rel_line >= clip->content_height) {
+                        goto affine_done; /* whole line outside: leave backdrop */
+                    }
+                    clip_left = clip->offset_x;
+                    clip_right = clip->offset_x + clip->content_width;
+                    if (clip_left < 0) clip_left = 0;
+                    if (clip_right > MODE1_GBA_WIDTH) clip_right = MODE1_GBA_WIDTH;
+                }
+
+            for (x = clip_left; x < clip_right; ++x) {
+                int rel_x = (clip != NULL) ? (x - clip->offset_x) : x;
+                int32_t tex_x = ref_x + pb * rel_line + pa * rel_x;
+                int32_t tex_y = ref_y + pd * rel_line + pc * rel_x;
                 int32_t src_x = tex_x >> 8;
                 int32_t src_y = tex_y >> 8;
                 int tile_col;
@@ -119,6 +152,8 @@ void virtuappu_mode2_render_frame(const PPUMemory *ppu)
                 bg_layers[2][x] = virtuappu_mode1_rgb555_to_abgr8888(memory.bg_palette[color_index]);
                 bg_priority[2][x] = bg_priority_value;
             }
+            }
+        affine_done:;
         }
 
         if ((dispcnt & MODE1_DISP_OBJ_ON) != 0u) {
