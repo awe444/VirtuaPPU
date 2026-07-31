@@ -90,6 +90,12 @@ void virtuappu_mode1_set_window_h_bounds(int window_index, int left, int right);
  * screen began at offset_x, and outside it the layer contributes nothing,
  * so the backdrop shows through.
  *
+ * `offset_y` / `content_height` are the same statement about rows, for a
+ * display taller than the content. The two axes are independent: a host
+ * centring a 240x160 surface on a 320x240 display sets both, while one
+ * that only wants a layer pinned to the top of a taller display sets
+ * offset_y = 0 and content_height = the full frame.
+ *
  * Unlike a map source this works with the layer's normal screenblock
  * fetch, which matters for content loaded straight into VRAM rather than
  * staged in a buffer the host could hand over.
@@ -98,6 +104,8 @@ void virtuappu_mode1_set_window_h_bounds(int window_index, int left, int right);
 typedef struct {
     int offset_x;
     int content_width;
+    int offset_y;
+    int content_height;
 } VirtuaPPUMode1BgClip;
 
 void virtuappu_mode1_set_bg_clip(int bg_index, const VirtuaPPUMode1BgClip *clip);
@@ -121,6 +129,10 @@ void virtuappu_mode1_set_obj_offset(int dx, int dy);
  * border rather than world, and a sprite standing in them is an object that
  * hardware would simply never have drawn. Defaults to the full frame. */
 void virtuappu_mode1_set_obj_clip(int left, int right);
+
+/* The same suppression for rows, for a display taller than the content.
+ * Independent of the horizontal pair; defaults to the full frame. */
+void virtuappu_mode1_set_obj_clip_v(int top, int bottom);
 
 /* Rendered viewport. GBA-native by default; a host that drives the PPU
  * with non-hardware BG sources (see VirtuaPPUMode1MapSource) can override

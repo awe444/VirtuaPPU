@@ -298,11 +298,19 @@ static bool mode1_map_source_active[MODE1_GBA_BG_COUNT];
 
 static int mode1_obj_clip_left = 0;
 static int mode1_obj_clip_right = MODE1_GBA_WIDTH;
+static int mode1_obj_clip_top = 0;
+static int mode1_obj_clip_bottom = MODE1_GBA_HEIGHT;
 
 void virtuappu_mode1_set_obj_clip(int left, int right)
 {
     mode1_obj_clip_left = (left < 0) ? 0 : left;
     mode1_obj_clip_right = (right > MODE1_GBA_WIDTH) ? MODE1_GBA_WIDTH : right;
+}
+
+void virtuappu_mode1_set_obj_clip_v(int top, int bottom)
+{
+    mode1_obj_clip_top = (top < 0) ? 0 : top;
+    mode1_obj_clip_bottom = (bottom > MODE1_GBA_HEIGHT) ? MODE1_GBA_HEIGHT : bottom;
 }
 
 static int mode1_obj_offset_x = 0;
@@ -420,20 +428,33 @@ void virtuappu_mode1_render_text_bg_line(int bg_index, int line, uint32_t *line_
     const VirtuaPPUMode1MapSource *map_src =
         mode1_map_source_active[bg_index] ? &mode1_map_sources[bg_index] : NULL;
     int eff_line = (line / mosaic_v) * mosaic_v;
+    const VirtuaPPUMode1BgClip *clip =
+        mode1_bg_clip_active[bg_index] ? &mode1_bg_clips[bg_index] : NULL;
+    int clipped_line = eff_line;
+    int src_y;
+    int tile_row;
+    int pixel_y;
+    int x;
+
+    /* Rows outside the clip's vertical span contribute nothing at all, so
+     * the whole line is backdrop and there is no column loop to run. */
+    if (clip != NULL) {
+        clipped_line = eff_line - clip->offset_y;
+        if (clipped_line < 0 || clipped_line >= clip->content_height) {
+            return;
+        }
+    }
+
     /* Map-source layers address an absolute room position and do not wrap;
      * screenblock layers wrap modulo the hardware map size. */
-    int src_y = map_src ? (eff_line + map_src->origin_y)
-                        : ((eff_line + scroll_y) % (map_height_tiles * 8));
-    int tile_row = src_y / 8;
-    int pixel_y = src_y % 8;
-    int x;
+    src_y = map_src ? (clipped_line + map_src->origin_y)
+                    : ((clipped_line + scroll_y) % (map_height_tiles * 8));
+    tile_row = src_y / 8;
+    pixel_y = src_y % 8;
 
     if (map_src && (src_y < 0 || tile_row >= map_src->height_tiles)) {
         return; /* line lies outside the room: leave backdrop */
     }
-
-    const VirtuaPPUMode1BgClip *clip =
-        mode1_bg_clip_active[bg_index] ? &mode1_bg_clips[bg_index] : NULL;
 
     for (x = 0; x < MODE1_GBA_WIDTH; ++x) {
         int eff_x = (x / mosaic_h) * mosaic_h;
@@ -538,6 +559,12 @@ void virtuappu_mode1_render_obj_line(int line, bool obj_1d, uint32_t *line_buffe
 {
     const uint32_t obj_tile_base = 0x10000u;
     int i;
+
+    /* Rows outside the OBJ clip are border, not content — same reasoning as
+     * the horizontal pair, and cheaper to reject a whole line at once. */
+    if (line < mode1_obj_clip_top || line >= mode1_obj_clip_bottom) {
+        return;
+    }
 
     for (i = MODE1_GBA_OAM_COUNT - 1; i >= 0; --i) {
         Mode1OAMAttr attr;
