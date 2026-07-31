@@ -346,6 +346,14 @@ void virtuappu_mode1_clear_bg_clips(void)
     }
 }
 
+const VirtuaPPUMode1BgClip *virtuappu_mode1_get_bg_clip(int bg_index)
+{
+    if (bg_index < 0 || bg_index >= MODE1_GBA_BG_COUNT) {
+        return NULL;
+    }
+    return mode1_bg_clip_active[bg_index] ? &mode1_bg_clips[bg_index] : NULL;
+}
+
 static VirtuaPPUMode1WindowBounds mode1_window_bounds[2];
 static bool mode1_window_bounds_active[2];
 
