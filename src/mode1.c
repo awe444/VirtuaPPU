@@ -97,6 +97,33 @@ static int mode1_oam_y(Mode1OAMAttr attr)
     return attr.attr0 & 0xFF;
 }
 
+/* Resolved on-screen y for OAM slot `index`, before the global OBJ offset.
+ *
+ * The hardware field is 8 bits, so a sprite above the top edge is encoded by
+ * wrapping and recovered here by reading the band [MODE1_GBA_HEIGHT,255] as
+ * negative. That band has to be wider than the tallest sprite for the
+ * recovery to be unambiguous, and at 240 lines it is 16 px against a
+ * double-size affine sprite's 128 — so tall sprites straddling the top edge
+ * would be pulled back onto the visible screen.
+ *
+ * Where the host supplies the untruncated y it wins. It is cross-checked
+ * against attr0's low byte first: any writer that sets a sprite's y without
+ * updating the channel disagrees there and gets the hardware reading, which
+ * is what a slot recycled behind the host's back should fall back to.
+ */
+static int mode1_obj_y(int index, Mode1OAMAttr attr)
+{
+    int packed = mode1_oam_y(attr);
+
+    if (mode1_memory.oam_y_ext != NULL) {
+        int ext = mode1_memory.oam_y_ext[index];
+        if ((ext & 0xFF) == packed) {
+            return ext;
+        }
+    }
+    return (packed >= MODE1_GBA_HEIGHT) ? (packed - 256) : packed;
+}
+
 static uint8_t mode1_oam_shape(Mode1OAMAttr attr)
 {
     return (uint8_t)((attr.attr0 >> 14u) & 3u);
@@ -230,6 +257,7 @@ void virtuappu_mode1_bind_gba_memory(const VirtuaPPUMode1GbaMemory *memory)
     mode1_memory.bg_palette = (memory != NULL && memory->bg_palette != NULL) ? memory->bg_palette : mode1_default_bg_palette;
     mode1_memory.obj_palette = (memory != NULL && memory->obj_palette != NULL) ? memory->obj_palette : mode1_default_obj_palette;
     mode1_memory.oam_mem = (memory != NULL && memory->oam_mem != NULL) ? memory->oam_mem : mode1_default_oam_mem;
+    mode1_memory.oam_y_ext = (memory != NULL) ? memory->oam_y_ext : NULL;
 }
 
 void virtuappu_mode1_get_bound_gba_memory(VirtuaPPUMode1GbaMemory *memory)
@@ -323,6 +351,16 @@ void virtuappu_mode1_set_window_bounds(int window_index, const VirtuaPPUMode1Win
         return;
     }
     mode1_window_bounds[window_index] = *bounds;
+    mode1_window_bounds_active[window_index] = true;
+}
+
+void virtuappu_mode1_set_window_h_bounds(int window_index, int left, int right)
+{
+    if (window_index < 0 || window_index > 1) {
+        return;
+    }
+    mode1_window_bounds[window_index].left = left;
+    mode1_window_bounds[window_index].right = right;
     mode1_window_bounds_active[window_index] = true;
 }
 
@@ -548,10 +586,7 @@ void virtuappu_mode1_render_obj_line(int line, bool obj_1d, uint32_t *line_buffe
             bounds_height *= 2;
         }
 
-        obj_y = mode1_oam_y(attr);
-        if (obj_y >= MODE1_GBA_HEIGHT) {
-            obj_y -= 256;
-        }
+        obj_y = mode1_obj_y(i, attr);
         obj_y += mode1_obj_offset_y;
         if (line < obj_y || line >= obj_y + bounds_height) {
             continue;
@@ -924,8 +959,7 @@ void virtuappu_mode1_render_affine_obj_overlay(uint32_t *dst, int dst_w, int dst
             bounds_height *= 2;
         }
 
-        int obj_y = mode1_oam_y(attr);
-        if (obj_y >= MODE1_GBA_HEIGHT) obj_y -= 256;
+        int obj_y = mode1_obj_y(i, attr);
         int obj_x = mode1_oam_x(attr);
         if (obj_x >= MODE1_GBA_WIDTH)  obj_x -= 512;
 
