@@ -70,6 +70,16 @@ typedef struct {
 void virtuappu_mode1_set_window_bounds(int window_index, const VirtuaPPUMode1WindowBounds *bounds);
 void virtuappu_mode1_clear_window_bounds(void);
 
+/* Replace only a window's horizontal pair, keeping the vertical one.
+ *
+ * Once a host supplies bounds through set_window_bounds, those win over the
+ * packed 8-bit WIN0H/WIN1H registers for the rest of the frame — which is
+ * correct for a whole-frame window and wrong for one an HBlank DMA rewrites
+ * every scanline, because the DMA's writes land in the registers the host
+ * bounds are overriding. A host driving a per-scanline window calls this
+ * from its pre-line callback so each line's edges reach the raster. */
+void virtuappu_mode1_set_window_h_bounds(int window_index, int left, int right);
+
 /* Layer clip + offset (non-GBA extension).
  *
  * A text BG wraps modulo its map size, so content authored for a 256-px
@@ -80,6 +90,12 @@ void virtuappu_mode1_clear_window_bounds(void);
  * screen began at offset_x, and outside it the layer contributes nothing,
  * so the backdrop shows through.
  *
+ * `offset_y` / `content_height` are the same statement about rows, for a
+ * display taller than the content. The two axes are independent: a host
+ * centring a 240x160 surface on a 320x240 display sets both, while one
+ * that only wants a layer pinned to the top of a taller display sets
+ * offset_y = 0 and content_height = the full frame.
+ *
  * Unlike a map source this works with the layer's normal screenblock
  * fetch, which matters for content loaded straight into VRAM rather than
  * staged in a buffer the host could hand over.
@@ -88,6 +104,8 @@ void virtuappu_mode1_clear_window_bounds(void);
 typedef struct {
     int offset_x;
     int content_width;
+    int offset_y;
+    int content_height;
 } VirtuaPPUMode1BgClip;
 
 void virtuappu_mode1_set_bg_clip(int bg_index, const VirtuaPPUMode1BgClip *clip);
@@ -111,6 +129,10 @@ void virtuappu_mode1_set_obj_offset(int dx, int dy);
  * border rather than world, and a sprite standing in them is an object that
  * hardware would simply never have drawn. Defaults to the full frame. */
 void virtuappu_mode1_set_obj_clip(int left, int right);
+
+/* The same suppression for rows, for a display taller than the content.
+ * Independent of the horizontal pair; defaults to the full frame. */
+void virtuappu_mode1_set_obj_clip_v(int top, int bottom);
 
 /* Rendered viewport. GBA-native by default; a host that drives the PPU
  * with non-hardware BG sources (see VirtuaPPUMode1MapSource) can override
@@ -177,6 +199,15 @@ typedef struct VirtuaPPUMode1GbaMemory {
     uint16_t *bg_palette;
     uint16_t *obj_palette;
     uint16_t *oam_mem;
+    /* Optional per-slot untruncated OBJ y, 128 entries, parallel to oam_mem.
+     * attr0 holds y in 8 bits and hardware recovers "above the top edge" by
+     * wrapping mod 256; an emulator reads values >= the screen height as
+     * negative, which needs the band [height,255] to be wider than the most
+     * negative y a sprite can take. That holds at 160 lines (96 px of band)
+     * and fails at 240 (16 px). A host that positions its own sprites can
+     * supply the real y here and the wrap heuristic is bypassed.
+     * NULL — the default — keeps the pure-hardware interpretation. */
+    const int16_t *oam_y_ext;
 } VirtuaPPUMode1GbaMemory;
 
 void virtuappu_mode1_bind_gba_memory(const VirtuaPPUMode1GbaMemory *memory);
