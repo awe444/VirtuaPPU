@@ -3,6 +3,8 @@
 #include <string.h>
 
 #include "cpu/mode1.h"
+
+extern bool mode1_bg2_ref_per_line;
 #include "virtuappu.h"
 
 void virtuappu_mode2_render_frame(const PPUMemory *ppu)
@@ -114,10 +116,18 @@ void virtuappu_mode2_render_frame(const PPUMemory *ppu)
                     if (clip_right > MODE1_GBA_WIDTH) clip_right = MODE1_GBA_WIDTH;
                 }
 
+            /* Per-scanline DMA to BG2X/BG2Y replaces the reference the PPU
+             * would otherwise have accumulated to, so the pb/pd line term is
+             * already contained in what was just written. Adding it again
+             * counts the line twice. See
+             * virtuappu_mode1_set_bg2_ref_per_line. */
+            const int32_t line_pb = mode1_bg2_ref_per_line ? 0 : (int32_t)pb * rel_line;
+            const int32_t line_pd = mode1_bg2_ref_per_line ? 0 : (int32_t)pd * rel_line;
+
             for (x = clip_left; x < clip_right; ++x) {
                 int rel_x = (clip != NULL) ? (x - clip->offset_x) : x;
-                int32_t tex_x = ref_x + pb * rel_line + pa * rel_x;
-                int32_t tex_y = ref_y + pd * rel_line + pc * rel_x;
+                int32_t tex_x = ref_x + line_pb + pa * rel_x;
+                int32_t tex_y = ref_y + line_pd + pc * rel_x;
                 int32_t src_x = tex_x >> 8;
                 int32_t src_y = tex_y >> 8;
                 int tile_col;

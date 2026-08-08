@@ -313,6 +313,13 @@ void virtuappu_mode1_set_obj_clip_v(int top, int bottom)
     mode1_obj_clip_bottom = (bottom > MODE1_GBA_HEIGHT) ? MODE1_GBA_HEIGHT : bottom;
 }
 
+bool mode1_bg2_ref_per_line = false;
+
+void virtuappu_mode1_set_bg2_ref_per_line(bool per_line)
+{
+    mode1_bg2_ref_per_line = per_line;
+}
+
 static int mode1_obj_offset_x = 0;
 static int mode1_obj_offset_y = 0;
 

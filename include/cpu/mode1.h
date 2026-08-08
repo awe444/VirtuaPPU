@@ -125,6 +125,23 @@ const VirtuaPPUMode1BgClip *virtuappu_mode1_get_bg_clip(int bg_index);
  * (menu cursors, item icons, the title sword) have to travel the same
  * distance or they detach from what they belong to. Zero restores hardware
  * behaviour. */
+/* Whether BG2's affine reference point (BG2X/BG2Y) is being rewritten by
+ * HBlank-DMA on every scanline.
+ *
+ * On hardware the affine reference registers are latched once per frame and the
+ * PPU accumulates pb/pd into them line by line. A per-scanline DMA to BG2X/BG2Y
+ * *overwrites* that accumulator before each line is drawn, so the accumulated
+ * term must not be applied on top — the value the DMA just wrote is already the
+ * reference for that exact line.
+ *
+ * Applying both double-counts the line: the rolling barrel supplies
+ * `texY = (angle + line) << 8` per scanline and the renderer then added
+ * `pd * line` again, sampling the barrel texture at twice the vertical rate and
+ * rotating the picture roughly 0x50 out of step with the angle the game logic
+ * reads. Deepwood's cobweb hole was drawn about 55 degrees from where standing
+ * on it dropped you. B23. */
+void virtuappu_mode1_set_bg2_ref_per_line(bool per_line);
+
 void virtuappu_mode1_set_obj_offset(int dx, int dy);
 
 /* OBJ horizontal clip (non-GBA extension).
