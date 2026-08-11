@@ -48,6 +48,62 @@ void virtuappu_mode1_clear_map_sources(void);
  * is reading a hardware screenblock and so cannot cover more than 256 px. */
 bool virtuappu_mode1_has_map_source(int bg_index);
 
+/* Per-tile character-data selection (non-GBA extension).
+ *
+ * Some areas are too large for one tileset and swap tile *graphics* by
+ * camera position, choosing a group from a table of authored regions. The
+ * groups load to the same VRAM addresses — swapping the bytes under fixed
+ * tile indices is the whole design — so exactly one can be resident, and a
+ * display larger than the one the regions were authored for shows scenery
+ * from a region whose group is not the resident one.
+ *
+ * A host with more VRAM than the GBA can keep the alternative resident too,
+ * above MODE1_VRAM_SIZE, and say so here: for tiles whose character data
+ * falls in [addr_lo, addr_hi) and whose room position falls in one of
+ * `regions`, `offset` is added to the character address, reaching the other
+ * copy. Nothing else about the fetch changes.
+ *
+ * This is only expressible port-side. A tilemap entry's tile index is 10
+ * bits and BGxCNT's charbase is 2 bits, so no hardware encoding addresses a
+ * second copy — but a layer bound to a map source knows each tile's *room*
+ * coordinates, which is the space the region tables are written in, so the
+ * renderer has strictly better information than the camera ever did. Slots
+ * therefore apply on the map-source path only; a screenblock layer has no
+ * room position to test and is left alone.
+ *
+ * A slot is found by character address rather than by position because one
+ * room can run several of these tables at once over the same tiles, each
+ * governing a different range of tile indices — Hyrule Town runs three. The
+ * address says which table applies; the position says which of its regions.
+ *
+ * Regions are in *tile* units, matching tile_col/tile_row, and are tested
+ * first-match-wins, which is what the engine's own selection does and is
+ * load-bearing: some of these tables are partitions and others are a box in
+ * front of a whole-room default. `fallback` is for a tile matching none,
+ * which the authored gaps between regions produce.
+ *
+ * The host owns `regions` and it must outlive the binding, as with a map
+ * source's `map`. Publishing no slots leaves every fetch exactly as it was,
+ * which is every other room in the game. */
+typedef struct {
+    int x0, y0;       /* room rect origin, in 8x8 tiles */
+    int w, h;         /* extent, in tiles               */
+    uint32_t offset;  /* added to the character address */
+} VirtuaPPUMode1CharRegion;
+
+typedef struct {
+    uint32_t addr_lo;  /* half-open character-address range this list governs */
+    uint32_t addr_hi;
+    const VirtuaPPUMode1CharRegion *regions;
+    int count;
+    uint32_t fallback; /* offset for a tile matching no region */
+} VirtuaPPUMode1CharSlot;
+
+enum { MODE1_MAX_CHAR_SLOTS = 8 };
+
+void virtuappu_mode1_set_char_slots(int bg_index, const VirtuaPPUMode1CharSlot *slots, int count);
+void virtuappu_mode1_clear_char_slots(void);
+
 /* Window bounds override (non-GBA extension).
  *
  * WIN0H/WIN1H pack each edge into 8 bits, so no window can describe an
@@ -172,7 +228,15 @@ enum {
     MODE1_GBA_BG_COUNT = 4,
     MODE1_GBA_OAM_COUNT = 128,
     MODE1_IO_MEM_SIZE = 0x400,
+    /* The GBA's VRAM, and the bound every character fetch is checked
+     * against — an address past it reads as colour 0, exactly as before. */
     MODE1_VRAM_SIZE = 0x18000,
+    /* How much VRAM the host is expected to provide. A host that publishes
+     * character slots (see VirtuaPPUMode1CharSlot) must allocate this much,
+     * because a slot's offset moves a fetch into the bank above the GBA's.
+     * A host that publishes none never addresses past MODE1_VRAM_SIZE. */
+    MODE1_VRAM_SHADOW_OFFSET = 0x18000,
+    MODE1_VRAM_TOTAL_SIZE = MODE1_VRAM_SHADOW_OFFSET + MODE1_VRAM_SIZE,
     MODE1_PALETTE_COLORS = 256,
     MODE1_OAM_HALFWORDS = 512
 };

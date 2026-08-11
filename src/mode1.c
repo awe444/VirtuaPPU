@@ -27,7 +27,7 @@ typedef enum Mode1BlendEffect {
 } Mode1BlendEffect;
 
 static uint8_t mode1_default_io_mem[MODE1_IO_MEM_SIZE];
-static uint8_t mode1_default_vram[MODE1_VRAM_SIZE];
+static uint8_t mode1_default_vram[MODE1_VRAM_TOTAL_SIZE];
 static uint16_t mode1_default_bg_palette[MODE1_PALETTE_COLORS];
 static uint16_t mode1_default_obj_palette[MODE1_PALETTE_COLORS];
 static uint16_t mode1_default_oam_mem[MODE1_OAM_HALFWORDS];
@@ -296,6 +296,9 @@ unsigned long mode1_map_source_audit_bad = 0;
 static VirtuaPPUMode1MapSource mode1_map_sources[MODE1_GBA_BG_COUNT];
 static bool mode1_map_source_active[MODE1_GBA_BG_COUNT];
 
+static VirtuaPPUMode1CharSlot mode1_char_slots[MODE1_GBA_BG_COUNT][MODE1_MAX_CHAR_SLOTS];
+static int mode1_char_slot_count[MODE1_GBA_BG_COUNT];
+
 static int mode1_obj_clip_left = 0;
 static int mode1_obj_clip_right = MODE1_GBA_WIDTH;
 static int mode1_obj_clip_top = 0;
@@ -423,6 +426,62 @@ void virtuappu_mode1_clear_map_sources(void)
     }
 }
 
+void virtuappu_mode1_set_char_slots(int bg_index, const VirtuaPPUMode1CharSlot *slots, int count)
+{
+    int i;
+    if (bg_index < 0 || bg_index >= MODE1_GBA_BG_COUNT) {
+        return;
+    }
+    if (slots == NULL || count <= 0) {
+        mode1_char_slot_count[bg_index] = 0;
+        return;
+    }
+    if (count > MODE1_MAX_CHAR_SLOTS) {
+        count = MODE1_MAX_CHAR_SLOTS;
+    }
+    for (i = 0; i < count; ++i) {
+        mode1_char_slots[bg_index][i] = slots[i];
+    }
+    mode1_char_slot_count[bg_index] = count;
+}
+
+void virtuappu_mode1_clear_char_slots(void)
+{
+    int i;
+    for (i = 0; i < MODE1_GBA_BG_COUNT; ++i) {
+        mode1_char_slot_count[i] = 0;
+    }
+}
+
+/* Which copy of the character data this tile draws from.
+ *
+ * `char_addr` is the tile's own character base, not the pixel address, so
+ * the answer is the same for all 64 pixels of the tile. First match wins
+ * within a slot, mirroring CheckRegionsOnScreen; a tile in none of a slot's
+ * regions takes the slot's fallback, and a tile in no slot at all is
+ * ordinary hardware-addressed character data and stays where it is. */
+static uint32_t mode1_char_slot_offset(const VirtuaPPUMode1CharSlot *slots, int count,
+                                       uint32_t char_addr, int tile_col, int tile_row)
+{
+    int i;
+    int j;
+    for (i = 0; i < count; ++i) {
+        const VirtuaPPUMode1CharSlot *slot = &slots[i];
+        if (char_addr < slot->addr_lo || char_addr >= slot->addr_hi) {
+            continue;
+        }
+        for (j = 0; j < slot->count; ++j) {
+            const VirtuaPPUMode1CharRegion *region = &slot->regions[j];
+            if (tile_col >= region->x0 && tile_col < region->x0 + region->w &&
+                tile_row >= region->y0 && tile_row < region->y0 + region->h) {
+                return region->offset;
+            }
+        }
+        return slot->fallback;
+    }
+    return 0u;
+}
+
 void virtuappu_mode1_render_text_bg_line(int bg_index, int line, uint32_t *line_buffer, uint8_t *priority_buffer)
 {
     uint16_t bgcnt = virtuappu_mode1_io_read16((uint16_t)(MODE1_IO_BG0CNT + bg_index * 2));
@@ -446,6 +505,16 @@ void virtuappu_mode1_render_text_bg_line(int bg_index, int line, uint32_t *line_
     const VirtuaPPUMode1BgClip *clip =
         mode1_bg_clip_active[bg_index] ? &mode1_bg_clips[bg_index] : NULL;
     int clipped_line = eff_line;
+    /* Character slots need a tile's room position, which only a map-sourced
+     * layer has; a screenblock layer keeps the hardware fetch untouched. */
+    const VirtuaPPUMode1CharSlot *char_slots = mode1_char_slots[bg_index];
+    int char_slot_count = map_src ? mode1_char_slot_count[bg_index] : 0;
+    /* Resolved once per tile column. Within a column the tile entry — and so
+     * the tile index, and so the slot — is the same for all eight pixels, and
+     * tile_row is fixed for the line, so tile_col alone keys the answer. That
+     * is 40 lookups per line rather than 320. */
+    int char_cached_col = -1;
+    uint32_t char_offset = 0u;
     int src_y;
     int tile_row;
     int pixel_y;
@@ -544,14 +613,25 @@ void virtuappu_mode1_render_text_bg_line(int bg_index, int line, uint32_t *line_
         tile_pixel_x = mode1_tile_hflip(tile_entry) ? (7 - pixel_x) : pixel_x;
         tile_pixel_y = mode1_tile_vflip(tile_entry) ? (7 - pixel_y) : pixel_y;
 
+        if (char_slot_count != 0 && tile_col != char_cached_col) {
+            char_cached_col = tile_col;
+            char_offset = mode1_char_slot_offset(
+                char_slots, char_slot_count,
+                char_base + (uint32_t)mode1_tile_index(tile_entry) * (bpp8 ? 64u : 32u),
+                tile_col, tile_row);
+        }
+
+        /* The bound stays the GBA's own VRAM, so exactly the same addresses
+         * read as colour 0 as before; the offset only moves a read that was
+         * already legal into the copy this tile belongs to. */
         if (bpp8) {
             uint32_t addr = char_base + (uint32_t)mode1_tile_index(tile_entry) * 64u +
                             (uint32_t)tile_pixel_y * 8u + (uint32_t)tile_pixel_x;
-            color_index = (addr < MODE1_VRAM_SIZE) ? mode1_memory.vram[addr] : 0u;
+            color_index = (addr < MODE1_VRAM_SIZE) ? mode1_memory.vram[addr + char_offset] : 0u;
         } else {
             uint32_t addr = char_base + (uint32_t)mode1_tile_index(tile_entry) * 32u +
                             (uint32_t)tile_pixel_y * 4u + (uint32_t)(tile_pixel_x / 2);
-            uint8_t packed = (addr < MODE1_VRAM_SIZE) ? mode1_memory.vram[addr] : 0u;
+            uint8_t packed = (addr < MODE1_VRAM_SIZE) ? mode1_memory.vram[addr + char_offset] : 0u;
             color_index = (tile_pixel_x & 1) ? (packed >> 4u) : (packed & 0x0Fu);
         }
 
