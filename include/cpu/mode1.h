@@ -89,6 +89,7 @@ typedef struct {
     int x0, y0;       /* room rect origin, in 8x8 tiles */
     int w, h;         /* extent, in tiles               */
     uint32_t offset;  /* added to the character address */
+    int palette_set;  /* 0 = the hardware BG palette; see below */
 } VirtuaPPUMode1CharRegion;
 
 typedef struct {
@@ -96,13 +97,31 @@ typedef struct {
     uint32_t addr_hi;
     const VirtuaPPUMode1CharRegion *regions;
     int count;
-    uint32_t fallback; /* offset for a tile matching no region */
+    uint32_t fallback;      /* offset for a tile matching no region */
+    int fallback_palette_set;
 } VirtuaPPUMode1CharSlot;
 
-enum { MODE1_MAX_CHAR_SLOTS = 8 };
+enum { MODE1_MAX_CHAR_SLOTS = 16 };
 
 void virtuappu_mode1_set_char_slots(int bg_index, const VirtuaPPUMode1CharSlot *slots, int count);
 void virtuappu_mode1_clear_char_slots(void);
+
+/* Alternative BG palettes, selectable per tile by a char region.
+ *
+ * Some tileset swaps change the palette as well as the character data —
+ * Minish Village loads thirteen BG palettes with each of its five groups. A
+ * per-tile *character* offset alone then draws the right shapes in the wrong
+ * colours, so a region can name a palette to go with its tiles.
+ *
+ * Set 0 is the hardware palette and cannot be replaced. Sets 1 and up are
+ * 256-entry arrays the host owns and keeps current — including any fade the
+ * host applies to the hardware one, or the periphery will not darken with
+ * the rest of the screen. Unset sets fall back to the hardware palette, so a
+ * region naming one that was never supplied renders as it would have. */
+enum { MODE1_MAX_BG_PALETTE_SETS = 8 };
+
+void virtuappu_mode1_set_bg_palette_set(int index, const uint16_t *palette);
+void virtuappu_mode1_clear_bg_palette_sets(void);
 
 /* Window bounds override (non-GBA extension).
  *
@@ -233,10 +252,13 @@ enum {
     MODE1_VRAM_SIZE = 0x18000,
     /* How much VRAM the host is expected to provide. A host that publishes
      * character slots (see VirtuaPPUMode1CharSlot) must allocate this much,
-     * because a slot's offset moves a fetch into the bank above the GBA's.
-     * A host that publishes none never addresses past MODE1_VRAM_SIZE. */
+     * because a slot's offset moves a fetch into one of the banks above the
+     * GBA's own VRAM. A host that publishes none never addresses past
+     * MODE1_VRAM_SIZE, and needs only that much. */
     MODE1_VRAM_SHADOW_OFFSET = 0x18000,
-    MODE1_VRAM_TOTAL_SIZE = MODE1_VRAM_SHADOW_OFFSET + MODE1_VRAM_SIZE,
+    MODE1_VRAM_BANK_STRIDE = 0x18000,
+    MODE1_VRAM_BANKS = 6,
+    MODE1_VRAM_TOTAL_SIZE = MODE1_VRAM_SIZE + MODE1_VRAM_BANKS * MODE1_VRAM_BANK_STRIDE,
     MODE1_PALETTE_COLORS = 256,
     MODE1_OAM_HALFWORDS = 512
 };

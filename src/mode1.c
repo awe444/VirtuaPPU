@@ -298,6 +298,7 @@ static bool mode1_map_source_active[MODE1_GBA_BG_COUNT];
 
 static VirtuaPPUMode1CharSlot mode1_char_slots[MODE1_GBA_BG_COUNT][MODE1_MAX_CHAR_SLOTS];
 static int mode1_char_slot_count[MODE1_GBA_BG_COUNT];
+static const uint16_t *mode1_bg_palette_sets[MODE1_MAX_BG_PALETTE_SETS];
 
 static int mode1_obj_clip_left = 0;
 static int mode1_obj_clip_right = MODE1_GBA_WIDTH;
@@ -453,18 +454,44 @@ void virtuappu_mode1_clear_char_slots(void)
     }
 }
 
-/* Which copy of the character data this tile draws from.
+void virtuappu_mode1_set_bg_palette_set(int index, const uint16_t *palette)
+{
+    if (index <= 0 || index >= MODE1_MAX_BG_PALETTE_SETS) {
+        return; /* set 0 is the hardware palette */
+    }
+    mode1_bg_palette_sets[index] = palette;
+}
+
+void virtuappu_mode1_clear_bg_palette_sets(void)
+{
+    int i;
+    for (i = 0; i < MODE1_MAX_BG_PALETTE_SETS; ++i) {
+        mode1_bg_palette_sets[i] = NULL;
+    }
+}
+
+/* Which copy of the character data this tile draws from, and in which
+ * palette.
  *
  * `char_addr` is the tile's own character base, not the pixel address, so
  * the answer is the same for all 64 pixels of the tile. First match wins
  * within a slot, mirroring CheckRegionsOnScreen; a tile in none of a slot's
  * regions takes the slot's fallback, and a tile in no slot at all is
  * ordinary hardware-addressed character data and stays where it is. */
-static uint32_t mode1_char_slot_offset(const VirtuaPPUMode1CharSlot *slots, int count,
-                                       uint32_t char_addr, int tile_col, int tile_row)
+typedef struct {
+    uint32_t offset;
+    int palette_set;
+} Mode1CharChoice;
+
+static Mode1CharChoice mode1_char_slot_choice(const VirtuaPPUMode1CharSlot *slots, int count,
+                                              uint32_t char_addr, int tile_col, int tile_row)
 {
+    Mode1CharChoice choice;
     int i;
     int j;
+
+    choice.offset = 0u;
+    choice.palette_set = 0;
     for (i = 0; i < count; ++i) {
         const VirtuaPPUMode1CharSlot *slot = &slots[i];
         if (char_addr < slot->addr_lo || char_addr >= slot->addr_hi) {
@@ -474,12 +501,16 @@ static uint32_t mode1_char_slot_offset(const VirtuaPPUMode1CharSlot *slots, int 
             const VirtuaPPUMode1CharRegion *region = &slot->regions[j];
             if (tile_col >= region->x0 && tile_col < region->x0 + region->w &&
                 tile_row >= region->y0 && tile_row < region->y0 + region->h) {
-                return region->offset;
+                choice.offset = region->offset;
+                choice.palette_set = region->palette_set;
+                return choice;
             }
         }
-        return slot->fallback;
+        choice.offset = slot->fallback;
+        choice.palette_set = slot->fallback_palette_set;
+        return choice;
     }
-    return 0u;
+    return choice;
 }
 
 void virtuappu_mode1_render_text_bg_line(int bg_index, int line, uint32_t *line_buffer, uint8_t *priority_buffer)
@@ -515,6 +546,7 @@ void virtuappu_mode1_render_text_bg_line(int bg_index, int line, uint32_t *line_
      * is 40 lookups per line rather than 320. */
     int char_cached_col = -1;
     uint32_t char_offset = 0u;
+    const uint16_t *bg_palette = mode1_memory.bg_palette;
     int src_y;
     int tile_row;
     int pixel_y;
@@ -614,11 +646,16 @@ void virtuappu_mode1_render_text_bg_line(int bg_index, int line, uint32_t *line_
         tile_pixel_y = mode1_tile_vflip(tile_entry) ? (7 - pixel_y) : pixel_y;
 
         if (char_slot_count != 0 && tile_col != char_cached_col) {
-            char_cached_col = tile_col;
-            char_offset = mode1_char_slot_offset(
+            Mode1CharChoice choice = mode1_char_slot_choice(
                 char_slots, char_slot_count,
                 char_base + (uint32_t)mode1_tile_index(tile_entry) * (bpp8 ? 64u : 32u),
                 tile_col, tile_row);
+            char_cached_col = tile_col;
+            char_offset = choice.offset;
+            bg_palette = (choice.palette_set > 0 &&
+                          mode1_bg_palette_sets[choice.palette_set] != NULL)
+                             ? mode1_bg_palette_sets[choice.palette_set]
+                             : mode1_memory.bg_palette;
         }
 
         /* The bound stays the GBA's own VRAM, so exactly the same addresses
@@ -640,9 +677,9 @@ void virtuappu_mode1_render_text_bg_line(int bg_index, int line, uint32_t *line_
         }
 
         if (bpp8) {
-            rgb555 = mode1_memory.bg_palette[color_index];
+            rgb555 = bg_palette[color_index];
         } else {
-            rgb555 = mode1_memory.bg_palette[(size_t)mode1_tile_palette(tile_entry) * 16u + color_index];
+            rgb555 = bg_palette[(size_t)mode1_tile_palette(tile_entry) * 16u + color_index];
         }
 
         line_buffer[x] = virtuappu_mode1_rgb555_to_abgr8888(rgb555);
