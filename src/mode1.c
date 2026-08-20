@@ -357,6 +357,32 @@ void virtuappu_mode1_clear_bg_clips(void)
     }
 }
 
+static uint32_t mode1_bg_highlight[MODE1_GBA_BG_COUNT];
+
+void virtuappu_mode1_set_bg_highlight(int bg_index, uint32_t abgr)
+{
+    if (bg_index < 0 || bg_index >= MODE1_GBA_BG_COUNT) {
+        return;
+    }
+    mode1_bg_highlight[bg_index] = abgr;
+}
+
+void virtuappu_mode1_clear_bg_highlights(void)
+{
+    int i;
+    for (i = 0; i < MODE1_GBA_BG_COUNT; ++i) {
+        mode1_bg_highlight[i] = 0u;
+    }
+}
+
+/* Whether a composite-time layer id names a highlighted BG. The id space
+ * also carries OBJ (4) and backdrop (5), neither of which can be one. */
+static bool mode1_layer_highlighted(int layer_id)
+{
+    return layer_id >= 0 && layer_id < MODE1_GBA_BG_COUNT &&
+           mode1_bg_highlight[layer_id] != 0u;
+}
+
 const VirtuaPPUMode1BgClip *virtuappu_mode1_get_bg_clip(int bg_index)
 {
     if (bg_index < 0 || bg_index >= MODE1_GBA_BG_COUNT) {
@@ -547,6 +573,7 @@ void virtuappu_mode1_render_text_bg_line(int bg_index, int line, uint32_t *line_
     int char_cached_col = -1;
     uint32_t char_offset = 0u;
     const uint16_t *bg_palette = mode1_memory.bg_palette;
+    uint32_t highlight = mode1_bg_highlight[bg_index];
     int src_y;
     int tile_row;
     int pixel_y;
@@ -673,6 +700,15 @@ void virtuappu_mode1_render_text_bg_line(int bg_index, int line, uint32_t *line_
         }
 
         if (color_index == 0u) {
+            continue;
+        }
+
+        /* Colour index 0 is the layer's transparency and everything past
+         * this point is a pixel it actually draws, so the highlight is the
+         * whole of the layer's shape and nothing else. */
+        if (highlight != 0u) {
+            line_buffer[x] = highlight;
+            priority_buffer[x] = priority;
             continue;
         }
 
@@ -1031,6 +1067,17 @@ void virtuappu_mode1_composite_line(
                     break;
                 }
             }
+        }
+
+        /* A highlight is a measurement and must not be shaded into
+         * something else: blended as first target it stops being flat, and
+         * blended as second target it tints a layer that is genuinely in
+         * front of it, which reads as the highlighted layer being visible
+         * where it is not. Suppressing both makes "pure highlight colour"
+         * mean exactly "this layer is the pixel you see". */
+        if (allow_sfx && (mode1_layer_highlighted(top_layer) ||
+                          mode1_layer_highlighted(bottom_layer))) {
+            allow_sfx = false;
         }
 
         if (allow_sfx) {
