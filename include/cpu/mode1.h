@@ -192,6 +192,39 @@ void virtuappu_mode1_clear_bg_clips(void);
  * the title screen's sword. */
 const VirtuaPPUMode1BgClip *virtuappu_mode1_get_bg_clip(int bg_index);
 
+/* Flat-colour layer highlight (non-GBA extension, diagnostic only).
+ *
+ * A layer whose art is mostly transparent and whose opaque part is
+ * translucent and close in hue to what it covers cannot be located by
+ * looking at a frame — Minish Woods' light shaft is a 32x64 map that is
+ * blank across two thirds of its columns and alpha-blended at eva=9 over
+ * the forest floor everywhere else (B21). Neither a human nor a screenshot
+ * reader can point at where it starts and stops, and every measurement of
+ * it so far had to be made by building twice and differencing.
+ *
+ * With a highlight set, every pixel of that layer whose colour index is
+ * non-zero is written as `abgr` instead of its palette colour, and the
+ * layer is excluded from BLDCNT's colour special effects — as first target
+ * so the highlight stays flat, and as second target so it never tints a
+ * layer drawn over it. What survives to the frame buffer is then exactly
+ * the set of pixels where this layer is what you see, in one colour, out
+ * of one binary.
+ *
+ * Priority, windows and the OBJ stack are untouched: a highlighted pixel
+ * that hardware would have hidden stays hidden. Combine with the host's
+ * own layer switches to take the rest of the picture away.
+ *
+ * `abgr` is a frame-buffer word, not a GBA colour. Passing one outside the
+ * 5-bit-per-channel set the palette can produce — 0xFFFF00FF, magenta — is
+ * worth doing: no real pixel can then collide with it, so counting the
+ * highlight in a dump is exact rather than approximate.
+ *
+ * Text BG layers only, which is where a map-sourced or screenblock overlay
+ * lives; mode 2's affine path ignores it. Zero — the default for every
+ * layer — renders exactly as before. */
+void virtuappu_mode1_set_bg_highlight(int bg_index, uint32_t abgr);
+void virtuappu_mode1_clear_bg_highlights(void);
+
 /* Global OBJ offset (non-GBA extension).
  *
  * Shifts every sprite by (dx, dy) at composite time. Its purpose is to keep
