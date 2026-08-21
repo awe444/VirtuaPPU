@@ -82,6 +82,12 @@ static bool mode1_oam_double_size(Mode1OAMAttr attr)
     return mode1_oam_affine(attr) && (((attr.attr0 >> 9u) & 1u) != 0u);
 }
 
+/* attr0 bits 10-11: 0 normal, 1 semi-transparent, 2 OBJ window, 3 prohibited. */
+static uint8_t mode1_oam_mode(Mode1OAMAttr attr)
+{
+    return (uint8_t)((attr.attr0 >> 10u) & 3u);
+}
+
 static bool mode1_oam_hidden(Mode1OAMAttr attr)
 {
     return !mode1_oam_affine(attr) && (((attr.attr0 >> 9u) & 1u) != 0u);
@@ -356,6 +362,13 @@ void virtuappu_mode1_clear_bg_clips(void)
         mode1_bg_clip_active[i] = false;
     }
 }
+
+/* Set where the winning OBJ pixel on this line came from a sprite in OBJ
+ * mode 1. Written by render_obj_line, read by composite_line, which run in
+ * that order per line from both render_frame paths — the same relationship
+ * the obj_layer/obj_priority pair already has, kept file-static so the
+ * public signatures do not change. */
+static uint8_t mode1_obj_semi[MODE1_GBA_WIDTH];
 
 static uint32_t mode1_bg_highlight[MODE1_GBA_BG_COUNT];
 
@@ -728,6 +741,10 @@ void virtuappu_mode1_render_obj_line(int line, bool obj_1d, uint32_t *line_buffe
     const uint32_t obj_tile_base = 0x10000u;
     int i;
 
+    /* Cleared before the clip early-out below, so a suppressed line cannot
+     * leave the previous one's flags for the compositor to read. */
+    memset(mode1_obj_semi, 0, sizeof(mode1_obj_semi));
+
     /* Rows outside the OBJ clip are border, not content — same reasoning as
      * the horizontal pair, and cheaper to reject a whole line at once. */
     if (line < mode1_obj_clip_top || line >= mode1_obj_clip_bottom) {
@@ -892,6 +909,7 @@ void virtuappu_mode1_render_obj_line(int line, bool obj_1d, uint32_t *line_buffe
 
             line_buffer[screen_x] = virtuappu_mode1_rgb555_to_abgr8888(rgb555);
             priority_buffer[screen_x] = priority;
+            mode1_obj_semi[screen_x] = (uint8_t)(mode1_oam_mode(attr) == 1u);
         }
     }
 }
@@ -1080,7 +1098,17 @@ void virtuappu_mode1_composite_line(
             allow_sfx = false;
         }
 
-        if (allow_sfx) {
+        /* An OBJ in mode 1 is a blend first target whether or not BLDCNT says
+         * so, and it forces alpha blending whichever effect BLDCNT selects.
+         * That is not a refinement — it is the only way some scenes blend at
+         * all. Mt Crenel's summit sets BLDCNT to 0x2F40, whose first-target
+         * field is *empty*: the vapour wisps and the steam are semi-transparent
+         * sprites over a second-target mask of 0x2F, and reading only BLDCNT
+         * made them opaque white. */
+        if (allow_sfx && top_layer == 4 && mode1_obj_semi[x] &&
+            mode1_is_second_target(bldcnt, bottom_layer)) {
+            top_color = mode1_alpha_blend(top_color, bottom_color, eva, evb);
+        } else if (allow_sfx) {
             switch (effect) {
             case MODE1_BLEND_ALPHA:
                 if (mode1_is_first_target(bldcnt, top_layer) && mode1_is_second_target(bldcnt, bottom_layer)) {
