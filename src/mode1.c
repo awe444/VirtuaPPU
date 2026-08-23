@@ -369,6 +369,10 @@ void virtuappu_mode1_clear_bg_clips(void)
  * the obj_layer/obj_priority pair already has, kept file-static so the
  * public signatures do not change. */
 static uint8_t mode1_obj_semi[MODE1_GBA_WIDTH];
+/* Per-pixel best OBJ priority claimed by *any* covering sprite, opaque or
+ * not — what the OBJ layer is composited against the BGs at. See the
+ * note in virtuappu_mode1_render_obj_line (B45). */
+static uint8_t mode1_obj_claim[MODE1_GBA_WIDTH];
 
 static uint32_t mode1_bg_highlight[MODE1_GBA_BG_COUNT];
 
@@ -744,6 +748,7 @@ void virtuappu_mode1_render_obj_line(int line, bool obj_1d, uint32_t *line_buffe
     /* Cleared before the clip early-out below, so a suppressed line cannot
      * leave the previous one's flags for the compositor to read. */
     memset(mode1_obj_semi, 0, sizeof(mode1_obj_semi));
+    memset(mode1_obj_claim, 0xFF, sizeof(mode1_obj_claim));
 
     /* Rows outside the OBJ clip are border, not content — same reasoning as
      * the horizontal pair, and cheaper to reject a whole line at once. */
@@ -893,6 +898,43 @@ void virtuappu_mode1_render_obj_line(int line, bool obj_1d, uint32_t *line_buffe
                 color_index = (pixel_x & 1) ? (packed >> 4u) : (packed & 0x0Fu);
             }
 
+            /* The OBJ layer composites against the BGs at the priority of
+             * the **last covering sprite in OAM order**, opaque or not — not
+             * at the priority of the sprite that supplied the colour. The two
+             * are different quantities and can come from different sprites;
+             * conflating them also loses colours, because the buffer below is
+             * what resolves sprites against each other.
+             *
+             * This loop walks OAM backwards, so the last sprite in OAM order
+             * is the first one here: the claim is taken once, by whichever
+             * sprite reaches the pixel first, and later (lower-index) sprites
+             * leave it alone.
+             *
+             * It matters because TMC's swamp draws twelve *blank* priority-2
+             * sprites over the player (OBJECT_70, sprite 167 frame 11, every
+             * piece on OBJ VRAM tile 133, which is blank on hardware too).
+             * Their only job is to lend that priority to his priority-3
+             * sprite underneath, so the OBJ layer composites at 2, ties with
+             * the priority-2 ground and wins — OBJ beats BG on a tie — and he
+             * is drawn over the mud. As he sinks he slides out of the
+             * rectangle, loses the borrowed priority and is clipped from the
+             * bottom up. That is the sinking effect (B45); without it he
+             * vanishes outright on entering the mud.
+             *
+             * Two mGBA savestates pin the rule, each carrying its own
+             * picture. Swamp, pixel (118,70): OAM[7] priority 3 opaque, then
+             * OAM[14] priority 2 transparent — last covering is 14, so the
+             * layer composites at 2, ties the priority-2 ground and the player
+             * is drawn. Name entry, pixel (27,52): OAM[27] priority 1
+             * transparent, then OAM[33] priority 2 opaque — last covering is
+             * 33, so the layer composites at 2 and loses to BG1 at priority 1,
+             * leaving the letter's apex white. Taking the *best* priority
+             * rather than the last one renders the swamp correctly and eats
+             * two pixels of that apex. */
+            if (mode1_obj_claim[screen_x] == 0xFFu) {
+                mode1_obj_claim[screen_x] = priority;
+            }
+
             if (color_index == 0u) {
                 continue;
             }
@@ -910,6 +952,15 @@ void virtuappu_mode1_render_obj_line(int line, bool obj_1d, uint32_t *line_buffe
             line_buffer[screen_x] = virtuappu_mode1_rgb555_to_abgr8888(rgb555);
             priority_buffer[screen_x] = priority;
             mode1_obj_semi[screen_x] = (uint8_t)(mode1_oam_mode(attr) == 1u);
+        }
+    }
+
+    /* Hand the compositor the claimed priority rather than the colour's. Only
+     * where a colour exists: a pixel no sprite coloured contributes nothing
+     * whatever priority was claimed over it. */
+    for (i = 0; i < MODE1_GBA_WIDTH; ++i) {
+        if (line_buffer[i] != 0u && mode1_obj_claim[i] != 0xFFu) {
+            priority_buffer[i] = mode1_obj_claim[i];
         }
     }
 }
