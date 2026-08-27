@@ -369,10 +369,14 @@ void virtuappu_mode1_clear_bg_clips(void)
  * the obj_layer/obj_priority pair already has, kept file-static so the
  * public signatures do not change. */
 static uint8_t mode1_obj_semi[MODE1_GBA_WIDTH];
-/* Per-pixel best OBJ priority claimed by *any* covering sprite, opaque or
- * not — what the OBJ layer is composited against the BGs at. See the
- * note in virtuappu_mode1_render_obj_line (B45). */
+/* Per-pixel priority the OBJ layer is composited against the BGs at. See the
+ * note in virtuappu_mode1_render_obj_line (B45, B57). */
 static uint8_t mode1_obj_claim[MODE1_GBA_WIDTH];
+/* Per-pixel best priority among *transparent* covering sprites seen so far in
+ * the backwards OAM walk — i.e. among those with a higher OAM index than
+ * whichever sprite ends up supplying the colour. Only these lend a priority
+ * the colour's own sprite does not have (B57). */
+static uint8_t mode1_obj_trans[MODE1_GBA_WIDTH];
 
 static uint32_t mode1_bg_highlight[MODE1_GBA_BG_COUNT];
 
@@ -749,6 +753,7 @@ void virtuappu_mode1_render_obj_line(int line, bool obj_1d, uint32_t *line_buffe
      * leave the previous one's flags for the compositor to read. */
     memset(mode1_obj_semi, 0, sizeof(mode1_obj_semi));
     memset(mode1_obj_claim, 0xFF, sizeof(mode1_obj_claim));
+    memset(mode1_obj_trans, 0xFF, sizeof(mode1_obj_trans));
 
     /* Rows outside the OBJ clip are border, not content — same reasoning as
      * the horizontal pair, and cheaper to reject a whole line at once. */
@@ -899,16 +904,16 @@ void virtuappu_mode1_render_obj_line(int line, bool obj_1d, uint32_t *line_buffe
             }
 
             /* The OBJ layer composites against the BGs at the priority of
-             * the **last covering sprite in OAM order**, opaque or not — not
-             * at the priority of the sprite that supplied the colour. The two
-             * are different quantities and can come from different sprites;
-             * conflating them also loses colours, because the buffer below is
-             * what resolves sprites against each other.
+             * the sprite that supplied the colour, lowered by any **transparent**
+             * covering sprite later in OAM order. An opaque sprite that loses
+             * the colour lends nothing.
              *
-             * This loop walks OAM backwards, so the last sprite in OAM order
-             * is the first one here: the claim is taken once, by whichever
-             * sprite reaches the pixel first, and later (lower-index) sprites
-             * leave it alone.
+             * B45 had this as "the last covering sprite in OAM order, opaque or
+             * not", which the two savestates it was pinned on could not tell
+             * apart from the rule above: in both of them the last covering
+             * sprite *is* the one this rule picks. A third savestate
+             * (`baserom.ss1`, the Deepwood barrel) separates them and refutes
+             * "last" — see B57 below.
              *
              * It matters because TMC's swamp draws twelve *blank* priority-2
              * sprites over the player (OBJECT_70, sprite 167 frame 11, every
@@ -921,21 +926,33 @@ void virtuappu_mode1_render_obj_line(int line, bool obj_1d, uint32_t *line_buffe
              * bottom up. That is the sinking effect (B45); without it he
              * vanishes outright on entering the mud.
              *
-             * Two mGBA savestates pin the rule, each carrying its own
-             * picture. Swamp, pixel (118,70): OAM[7] priority 3 opaque, then
-             * OAM[14] priority 2 transparent — last covering is 14, so the
-             * layer composites at 2, ties the priority-2 ground and the player
-             * is drawn. Name entry, pixel (27,52): OAM[27] priority 1
-             * transparent, then OAM[33] priority 2 opaque — last covering is
-             * 33, so the layer composites at 2 and loses to BG1 at priority 1,
-             * leaving the letter's apex white. Taking the *best* priority
-             * rather than the last one renders the swamp correctly and eats
-             * two pixels of that apex. */
-            if (mode1_obj_claim[screen_x] == 0xFFu) {
-                mode1_obj_claim[screen_x] = priority;
-            }
-
+             * Three mGBA savestates pin it, each carrying its own picture:
+             *
+             *   swamp (118,70)      OAM[7] p3 opaque, OAM[14] p2 transparent
+             *                       -> claim 2: ties the p2 ground, player drawn
+             *   name entry (27,52)  OAM[27] p1 transparent, OAM[33] p2 opaque
+             *                       -> claim 2: loses to BG1 p1, apex stays white
+             *                          (the p1 transparent is *earlier* in OAM
+             *                          than the colour, so it lends nothing)
+             *   barrel (90,66)      OAM[9] p2 opaque, OAM[26] p3, OAM[34] p3
+             *                       -> claim 2: ties BG1/BG2 at p2, Link drawn
+             *
+             * The barrel is the one that decides. Under "last covering" the
+             * claim there is OAM[34]'s 3, the layer loses to two priority-2
+             * BGs and the player disappears over most of the room — B57, and it
+             * was live at both viewport sizes for five days.
+             *
+             * Taking the *best* priority over all covering sprites is the other
+             * rule these three reject: it renders swamp and barrel correctly
+             * and eats two pixels of the name entry's apex. */
             if (color_index == 0u) {
+                /* A transparent sprite pixel supplies no colour but can still
+                 * lend its priority — this walk is backwards, so every
+                 * transparent sprite recorded here has a higher OAM index than
+                 * any sprite that writes the colour below. */
+                if (priority < mode1_obj_trans[screen_x]) {
+                    mode1_obj_trans[screen_x] = priority;
+                }
                 continue;
             }
 
@@ -951,6 +968,13 @@ void virtuappu_mode1_render_obj_line(int line, bool obj_1d, uint32_t *line_buffe
 
             line_buffer[screen_x] = virtuappu_mode1_rgb555_to_abgr8888(rgb555);
             priority_buffer[screen_x] = priority;
+            /* Claim the better of this sprite's own priority and any lent by a
+             * transparent sprite later in OAM order. Recomputed on every colour
+             * write, so a lower-index sprite that takes the colour also takes
+             * the claim, and only transparent sprites still ahead of it lend. */
+            mode1_obj_claim[screen_x] = (mode1_obj_trans[screen_x] < priority)
+                                            ? mode1_obj_trans[screen_x]
+                                            : priority;
             mode1_obj_semi[screen_x] = (uint8_t)(mode1_oam_mode(attr) == 1u);
         }
     }
