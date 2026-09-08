@@ -225,6 +225,22 @@ const VirtuaPPUMode1BgClip *virtuappu_mode1_get_bg_clip(int bg_index);
 void virtuappu_mode1_set_bg_highlight(int bg_index, uint32_t abgr);
 void virtuappu_mode1_clear_bg_highlights(void);
 
+/* The same instrument for the backdrop — BG palette entry 0, which is what a
+ * pixel wears when no enabled layer supplied one.
+ *
+ * The backdrop is not a layer and cannot be switched off, so the subtraction
+ * that locates a BG does not work on it: taking every layer away leaves a
+ * frame that is entirely backdrop and says nothing about where it showed
+ * before. This stamps the pixels the compositor actually resolved *to* the
+ * backdrop, so "where is the backdrop" is answered in the frame itself.
+ *
+ * Applied after blending and only where the backdrop is the visible pixel
+ * (top layer). A translucent layer sitting over the backdrop still blends
+ * against the true colour, so no pixel that is not backdrop can wear the
+ * stamp and the count has no false positives. Zero renders exactly as
+ * before. */
+void virtuappu_mode1_set_backdrop_highlight(uint32_t abgr);
+
 /* Global OBJ offset (non-GBA extension).
  *
  * Shifts every sprite by (dx, dy) at composite time. Its purpose is to keep

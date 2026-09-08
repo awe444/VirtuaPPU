@@ -396,6 +396,15 @@ void virtuappu_mode1_clear_bg_highlights(void)
     }
 }
 
+/* Backdrop (composite layer id 5). See the header for why this cannot be
+ * done by taking layers away. */
+static uint32_t mode1_backdrop_highlight;
+
+void virtuappu_mode1_set_backdrop_highlight(uint32_t abgr)
+{
+    mode1_backdrop_highlight = abgr;
+}
+
 /* Whether a composite-time layer id names a highlighted BG. The id space
  * also carries OBJ (4) and backdrop (5), neither of which can be one. */
 static bool mode1_layer_highlighted(int layer_id)
@@ -1203,6 +1212,14 @@ void virtuappu_mode1_composite_line(
             default:
                 break;
             }
+        }
+
+        /* Stamped last so the blend above still ran against the real
+         * backdrop colour: a pixel that is merely *behind* a translucent
+         * layer is not backdrop and must not be counted as one. top_layer
+         * is still 5 only where nothing opaque was found at any priority. */
+        if (mode1_backdrop_highlight != 0u && top_layer == 5) {
+            top_color = mode1_backdrop_highlight;
         }
 
         virtuappu_frame_buffer[(size_t)line * MODE1_GBA_WIDTH + (size_t)x] = top_color;
