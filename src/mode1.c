@@ -405,6 +405,20 @@ void virtuappu_mode1_set_backdrop_highlight(uint32_t abgr)
     mode1_backdrop_highlight = abgr;
 }
 
+static const uint32_t *mode1_backdrop_image;
+
+void virtuappu_mode1_set_backdrop_image(const uint32_t *abgr, int width, int height)
+{
+    /* Dimensions must match exactly. Scaling or tiling a mismatched image
+     * would put it on screen looking almost right, which is the hardest kind
+     * of wrong to notice. */
+    if (abgr != NULL && (width != MODE1_GBA_WIDTH || height != MODE1_GBA_HEIGHT)) {
+        mode1_backdrop_image = NULL;
+        return;
+    }
+    mode1_backdrop_image = abgr;
+}
+
 /* Whether a composite-time layer id names a highlighted BG. The id space
  * also carries OBJ (4) and backdrop (5), neither of which can be one. */
 static bool mode1_layer_highlighted(int layer_id)
@@ -1007,6 +1021,8 @@ void virtuappu_mode1_composite_line(
     uint16_t dispcnt)
 {
     uint32_t backdrop_color = virtuappu_mode1_rgb555_to_abgr8888(mode1_memory.bg_palette[0]);
+    const uint32_t *backdrop_row =
+        (mode1_backdrop_image != NULL) ? &mode1_backdrop_image[(size_t)line * MODE1_GBA_WIDTH] : NULL;
     bool bg_enabled[MODE1_GBA_BG_COUNT] = {
         (dispcnt & MODE1_DISP_BG0_ON) != 0u,
         (dispcnt & MODE1_DISP_BG1_ON) != 0u,
@@ -1100,9 +1116,13 @@ void virtuappu_mode1_composite_line(
         bool visible_bg[MODE1_GBA_BG_COUNT];
         bool visible_obj;
         bool allow_sfx;
-        uint32_t top_color = backdrop_color;
+        /* Resolved per pixel so the artwork feeds the blend too, not just the
+         * visible pixel: a translucent layer over the backdrop must mix
+         * against what is actually behind it. */
+        uint32_t backdrop_px = (backdrop_row != NULL) ? backdrop_row[x] : backdrop_color;
+        uint32_t top_color = backdrop_px;
         int top_layer = 5;
-        uint32_t bottom_color = backdrop_color;
+        uint32_t bottom_color = backdrop_px;
         int bottom_layer = 5;
         bool found_top = false;
         bool found_bottom = false;

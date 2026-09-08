@@ -241,6 +241,24 @@ void virtuappu_mode1_clear_bg_highlights(void);
  * before. */
 void virtuappu_mode1_set_backdrop_highlight(uint32_t abgr);
 
+/* Source the backdrop from an image instead of BG palette entry 0.
+ *
+ * A host may want the area no layer covers to be a picture rather than a flat
+ * colour — a 240x160-authored screen centred in a larger viewport has a border
+ * that the GBA never had to fill, and artwork drawn for the larger size cannot
+ * go through VRAM if it carries more colours than a palette bank holds.
+ *
+ * `abgr` is width*height frame-buffer words, sampled at the pixel's own
+ * coordinates, and must stay valid until replaced. The dimensions must equal
+ * the rendered viewport or the image is ignored — a half-matching image would
+ * misalign silently, which is worse than not drawing.
+ *
+ * This feeds the blend as well as the visible pixel, so a translucent layer
+ * over the backdrop mixes against the artwork rather than against the colour
+ * it replaced. NULL restores palette entry 0. A backdrop *highlight*, being a
+ * measurement, still wins over the image. */
+void virtuappu_mode1_set_backdrop_image(const uint32_t* abgr, int width, int height);
+
 /* Global OBJ offset (non-GBA extension).
  *
  * Shifts every sprite by (dx, dy) at composite time. Its purpose is to keep
