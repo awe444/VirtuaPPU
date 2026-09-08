@@ -257,7 +257,18 @@ void virtuappu_mode1_set_backdrop_highlight(uint32_t abgr);
  * over the backdrop mixes against the artwork rather than against the colour
  * it replaced. NULL restores palette entry 0. A backdrop *highlight*, being a
  * measurement, still wins over the image. */
-void virtuappu_mode1_set_backdrop_image(const uint32_t* abgr, int width, int height);
+/* `stands_in_for` is the BG index the image is replacing, or -1.
+ *
+ * This is not bookkeeping. A host that swaps a layer out for the image has
+ * changed what sits underneath everything drawn above it, and BLDCNT names its
+ * blend targets by layer: the GBA title screen alpha-blends its light rays
+ * (first target BG0) onto BG1, so with BG1 taken away the pixel below the rays
+ * is the backdrop, which BLDCNT does not name, and the rays composite opaque.
+ * Naming the layer the image replaced makes the blend tests treat the backdrop
+ * as that layer, which is what it now is. -1 keeps the backdrop's own
+ * identity, where only BLDCNT's BD bits apply. */
+void virtuappu_mode1_set_backdrop_image(const uint32_t* abgr, int width, int height,
+                                        int stands_in_for);
 
 /* Global OBJ offset (non-GBA extension).
  *

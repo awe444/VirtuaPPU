@@ -406,9 +406,23 @@ void virtuappu_mode1_set_backdrop_highlight(uint32_t abgr)
 }
 
 static const uint32_t *mode1_backdrop_image;
+static int mode1_backdrop_stands_in_for = -1;
 
-void virtuappu_mode1_set_backdrop_image(const uint32_t *abgr, int width, int height)
+/* Blend-target identity of a composited layer. The backdrop answers as the
+ * layer it replaced when it is standing in for one — see the header. */
+static int mode1_blend_layer_id(int layer_id)
 {
+    if (layer_id == 5 && mode1_backdrop_image != NULL && mode1_backdrop_stands_in_for >= 0) {
+        return mode1_backdrop_stands_in_for;
+    }
+    return layer_id;
+}
+
+void virtuappu_mode1_set_backdrop_image(const uint32_t *abgr, int width, int height,
+                                        int stands_in_for)
+{
+    mode1_backdrop_stands_in_for =
+        (stands_in_for >= 0 && stands_in_for < MODE1_GBA_BG_COUNT) ? stands_in_for : -1;
     /* Dimensions must match exactly. Scaling or tiling a mismatched image
      * would put it on screen looking almost right, which is the hardest kind
      * of wrong to notice. */
@@ -1210,22 +1224,23 @@ void virtuappu_mode1_composite_line(
          * sprites over a second-target mask of 0x2F, and reading only BLDCNT
          * made them opaque white. */
         if (allow_sfx && top_layer == 4 && mode1_obj_semi[x] &&
-            mode1_is_second_target(bldcnt, bottom_layer)) {
+            mode1_is_second_target(bldcnt, mode1_blend_layer_id(bottom_layer))) {
             top_color = mode1_alpha_blend(top_color, bottom_color, eva, evb);
         } else if (allow_sfx) {
             switch (effect) {
             case MODE1_BLEND_ALPHA:
-                if (mode1_is_first_target(bldcnt, top_layer) && mode1_is_second_target(bldcnt, bottom_layer)) {
+                if (mode1_is_first_target(bldcnt, mode1_blend_layer_id(top_layer)) &&
+                    mode1_is_second_target(bldcnt, mode1_blend_layer_id(bottom_layer))) {
                     top_color = mode1_alpha_blend(top_color, bottom_color, eva, evb);
                 }
                 break;
             case MODE1_BLEND_BRIGHTEN:
-                if (mode1_is_first_target(bldcnt, top_layer)) {
+                if (mode1_is_first_target(bldcnt, mode1_blend_layer_id(top_layer))) {
                     top_color = mode1_brighten(top_color, evy);
                 }
                 break;
             case MODE1_BLEND_DARKEN:
-                if (mode1_is_first_target(bldcnt, top_layer)) {
+                if (mode1_is_first_target(bldcnt, mode1_blend_layer_id(top_layer))) {
                     top_color = mode1_darken(top_color, evy);
                 }
                 break;
