@@ -339,6 +339,32 @@ void virtuappu_mode1_set_obj_offset(int dx, int dy)
     mode1_obj_offset_y = dy;
 }
 
+/* Top-left of the GBA's 240x160 screen within the rendered frame. See the note
+ * in mode1.h: mosaic is quantised in screen space, so the block grid has to
+ * start where hardware's screen starts. (0,0) at native size. */
+static int mode1_mosaic_origin_x = 0;
+static int mode1_mosaic_origin_y = 0;
+
+void virtuappu_mode1_set_mosaic_origin(int x, int y)
+{
+    mode1_mosaic_origin_x = x;
+    mode1_mosaic_origin_y = y;
+}
+
+/* Snap `v` down to the mosaic grid of pitch `size` anchored at `origin`.
+ * Floor division, not C's truncation: the border left of / above the GBA rect
+ * has v < origin, and truncating toward zero there would widen the block
+ * straddling the corner instead of continuing the grid. */
+static int mode1_mosaic_snap(int v, int origin, int size)
+{
+    int d = v - origin;
+    int q = d / size;
+    if (d % size != 0 && d < 0) {
+        q--;
+    }
+    return origin + q * size;
+}
+
 static VirtuaPPUMode1BgClip mode1_bg_clips[MODE1_GBA_BG_COUNT];
 static bool mode1_bg_clip_active[MODE1_GBA_BG_COUNT];
 
@@ -616,12 +642,15 @@ void virtuappu_mode1_render_text_bg_line(int bg_index, int line, uint32_t *line_
     int scroll_x = virtuappu_mode1_io_read16((uint16_t)(MODE1_IO_BG0HOFS + bg_index * 4)) & 0x1FF;
     int scroll_y = virtuappu_mode1_io_read16((uint16_t)(MODE1_IO_BG0VOFS + bg_index * 4)) & 0x1FF;
     uint16_t mosaic_reg = virtuappu_mode1_io_read16(MODE1_IO_MOSAIC);
-    mosaic_on = mosaic_on && getenv("TMC_ENABLE_MOSAIC") != NULL;
+    /* REG_MOSAIC low byte is the BG size, minus one per axis. A size of 1 is
+     * the identity, so a layer with BGCNT's mosaic bit set but a zero register
+     * costs nothing — which is what the Minish-path backgrounds do outside a
+     * fade, and why enabling this is inert except while one is running. */
     int mosaic_h = mosaic_on ? (int)((mosaic_reg & 0x0Fu) + 1u) : 1;
     int mosaic_v = mosaic_on ? (int)(((mosaic_reg >> 4u) & 0x0Fu) + 1u) : 1;
     const VirtuaPPUMode1MapSource *map_src =
         mode1_map_source_active[bg_index] ? &mode1_map_sources[bg_index] : NULL;
-    int eff_line = (line / mosaic_v) * mosaic_v;
+    int eff_line = mode1_mosaic_snap(line, mode1_mosaic_origin_y, mosaic_v);
     const VirtuaPPUMode1BgClip *clip =
         mode1_bg_clip_active[bg_index] ? &mode1_bg_clips[bg_index] : NULL;
     int clipped_line = eff_line;
@@ -663,7 +692,7 @@ void virtuappu_mode1_render_text_bg_line(int bg_index, int line, uint32_t *line_
     }
 
     for (x = 0; x < MODE1_GBA_WIDTH; ++x) {
-        int eff_x = (x / mosaic_h) * mosaic_h;
+        int eff_x = mode1_mosaic_snap(x, mode1_mosaic_origin_x, mosaic_h);
         int clipped_x = eff_x;
         int src_x;
         if (clip != NULL) {

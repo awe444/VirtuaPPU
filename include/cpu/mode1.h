@@ -297,6 +297,22 @@ void virtuappu_mode1_set_bg2_ref_per_line(bool per_line);
 
 void virtuappu_mode1_set_obj_offset(int dx, int dy);
 
+/* Where the GBA's 240x160 display sits inside the rendered frame, for effects
+ * that are anchored to the *screen* rather than to the world or to a layer.
+ *
+ * Mosaic is the one that needs it. Hardware quantises a BG pixel to
+ * `(x / size) * size` in screen space, so the block grid starts at the top-left
+ * of the GBA's screen. Rendering a wider frame moves that corner: with the
+ * native rect centred in 320x240 it is at (40,40), and a grid anchored at the
+ * frame origin instead lands on different pixels for every block size that does
+ * not divide 40 — the same "authored for 160 rows" mistake as the region tables.
+ * Anchoring here makes the centred sub-rect match hardware exactly and extends
+ * the same grid outward into the border.
+ *
+ * Defaults to (0,0), which is correct at GBA-native size and makes this a no-op
+ * for hosts that do not set it. */
+void virtuappu_mode1_set_mosaic_origin(int x, int y);
+
 /* OBJ horizontal clip (non-GBA extension).
  *
  * Suppresses sprite pixels outside [left, right). On hardware the screen is
