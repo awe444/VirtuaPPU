@@ -377,6 +377,11 @@ static uint8_t mode1_obj_claim[MODE1_GBA_WIDTH];
  * whichever sprite ends up supplying the colour. Only these lend a priority
  * the colour's own sprite does not have (B57). */
 static uint8_t mode1_obj_trans[MODE1_GBA_WIDTH];
+/* Per-pixel OBJ-window mask: set where a sprite in OBJ mode 2 has a
+ * non-transparent texel on this line. Such a sprite is never drawn — it marks
+ * out a window region instead — so this is the whole of its contribution.
+ * Same write/read relationship as mode1_obj_semi above. */
+static uint8_t mode1_obj_window[MODE1_GBA_WIDTH];
 
 static uint32_t mode1_bg_highlight[MODE1_GBA_BG_COUNT];
 
@@ -791,6 +796,7 @@ void virtuappu_mode1_render_obj_line(int line, bool obj_1d, uint32_t *line_buffe
     memset(mode1_obj_semi, 0, sizeof(mode1_obj_semi));
     memset(mode1_obj_claim, 0xFF, sizeof(mode1_obj_claim));
     memset(mode1_obj_trans, 0xFF, sizeof(mode1_obj_trans));
+    memset(mode1_obj_window, 0, sizeof(mode1_obj_window));
 
     /* Rows outside the OBJ clip are border, not content — same reasoning as
      * the horizontal pair, and cheaper to reject a whole line at once. */
@@ -805,6 +811,7 @@ void virtuappu_mode1_render_obj_line(int line, bool obj_1d, uint32_t *line_buffe
         int obj_width;
         int obj_height;
         bool is_affine;
+        bool is_obj_window;
         int bounds_width;
         int bounds_height;
         int obj_y;
@@ -863,6 +870,7 @@ void virtuappu_mode1_render_obj_line(int line, bool obj_1d, uint32_t *line_buffe
         priority = mode1_oam_priority(attr);
         base_tile = mode1_oam_tile_index(attr);
         tiles_w = obj_width / 8;
+        is_obj_window = (mode1_oam_mode(attr) == 2u);
 
         if (is_affine) {
             int affine_group = mode1_oam_affine_index(attr);
@@ -982,6 +990,19 @@ void virtuappu_mode1_render_obj_line(int line, bool obj_1d, uint32_t *line_buffe
              * Taking the *best* priority over all covering sprites is the other
              * rule these three reject: it renders swamp and barrel correctly
              * and eats two pixels of the name entry's apex. */
+            /* A sprite in OBJ mode 2 is a *mask*, not graphics: hardware
+             * never draws it, and its opaque texels instead mark this pixel
+             * as inside the OBJ window. Taken before the transparent-pixel
+             * branch below on purpose — an undrawn sprite must not lend a
+             * priority either, and B57's rule is about sprites that are
+             * drawn. */
+            if (is_obj_window) {
+                if (color_index != 0u) {
+                    mode1_obj_window[screen_x] = 1u;
+                }
+                continue;
+            }
+
             if (color_index == 0u) {
                 /* A transparent sprite pixel supplies no colour but can still
                  * lend its priority — this walk is backwards, so every
@@ -1055,7 +1076,12 @@ void virtuappu_mode1_composite_line(
     uint8_t bg_order_priority[MODE1_GBA_BG_COUNT];
     bool win0_on = (dispcnt & MODE1_DISP_WIN0_ON) != 0u;
     bool win1_on = (dispcnt & MODE1_DISP_WIN1_ON) != 0u;
-    bool any_window = win0_on || win1_on;
+    /* The OBJ window is produced by the sprite engine, so it needs OBJ display
+     * as well as its own DISPCNT bit. Requiring obj_enabled also means a frame
+     * with sprites off cannot read a stale mask: render_obj_line is what clears
+     * mode1_obj_window, and both call sites skip it when OBJ is off. */
+    bool objwin_on = (dispcnt & MODE1_DISP_OBJWIN_ON) != 0u && obj_enabled;
+    bool any_window = win0_on || win1_on || objwin_on;
     uint16_t winin = virtuappu_mode1_io_read16(MODE1_IO_WININ);
     uint16_t winout = virtuappu_mode1_io_read16(MODE1_IO_WINOUT);
     uint16_t win0h = virtuappu_mode1_io_read16(MODE1_IO_WIN0H);
@@ -1077,6 +1103,7 @@ void virtuappu_mode1_composite_line(
     uint8_t win0_ctrl = (uint8_t)(winin & 0x3Fu);
     uint8_t win1_ctrl = (uint8_t)((winin >> 8u) & 0x3Fu);
     uint8_t outside_ctrl = (uint8_t)(winout & 0x3Fu);
+    uint8_t objwin_ctrl = (uint8_t)((winout >> 8u) & 0x3Fu);
     int i;
     int x;
 
@@ -1144,6 +1171,9 @@ void virtuappu_mode1_composite_line(
 
         if (any_window) {
             win_ctrl = outside_ctrl;
+            if (objwin_on && mode1_obj_window[x]) {
+                win_ctrl = objwin_ctrl;
+            }
             if (win1_v_active) {
                 bool in_h = win1_h_wrap ? (x >= win1_left || x < win1_right) : (x >= win1_left && x < win1_right);
                 if (in_h) {
