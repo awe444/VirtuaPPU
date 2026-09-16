@@ -1170,10 +1170,20 @@ void virtuappu_mode1_composite_line(
         bg_order_priority[i] = (uint8_t)(virtuappu_mode1_io_read16((uint16_t)(MODE1_IO_BG0CNT + i * 2)) & 3u);
     }
 
+    /* Sort front-to-back by BGxCNT priority, ties broken by BG index. On GBA a
+     * priority tie is won by the *lower* BG number (GBATEK: BG0 in front of BG1,
+     * BG1 in front of BG2, ...), so the index tie-break is not cosmetic. Without
+     * it this selection-swap is unstable: swapping a far element across a tied
+     * pair reverses their order, which put a priority-2 floor layer (BG2) in
+     * front of a priority-2 torch layer (BG1) and hid every lightable torch in
+     * the game. The comparator below is a total order, which makes the
+     * selection-swap correct. */
     for (i = 0; i < MODE1_GBA_BG_COUNT - 1; ++i) {
         int j;
         for (j = i + 1; j < MODE1_GBA_BG_COUNT; ++j) {
-            if (bg_order_priority[bg_order[j]] < bg_order_priority[bg_order[i]]) {
+            int pj = bg_order_priority[bg_order[j]];
+            int pi = bg_order_priority[bg_order[i]];
+            if (pj < pi || (pj == pi && bg_order[j] < bg_order[i])) {
                 uint8_t tmp = bg_order[i];
                 bg_order[i] = bg_order[j];
                 bg_order[j] = tmp;
