@@ -181,6 +181,27 @@ typedef struct {
     int content_width;
     int offset_y;
     int content_height;
+    /* Affine layers only (mode 2's BG2 path): paint the whole frame instead
+     * of only the content box, while still mapping screen coordinates
+     * through offset_x/offset_y as usual.
+     *
+     * The clip does two separable jobs for an affine layer: it re-bases the
+     * transform's coordinate so the image lands where the authored 240x160
+     * screen would have put it, and it limits the painted extent to that
+     * box. The first is what makes an affine layer agree with everything
+     * around it; the second is what crops a *magnified* image whose content
+     * legitimately extends past the box. A full-screen cinematic -- the
+     * title screen's sword sweeping in at 16x -- wants the re-basing and not
+     * the limit, so its off-box pixels are drawn rather than cut.
+     *
+     * This is safe exactly because the transform still runs: samples that
+     * fall outside the authored artwork land on blank map tiles and are
+     * skipped as transparent, so the painted area shrinks to nothing on its
+     * own as the image reaches 1:1. It is not a licence to stretch a layer.
+     *
+     * Zero for every clip that does not ask for it, which is all of them
+     * bar the one the port declares. */
+    int affine_paint_full_frame;
 } VirtuaPPUMode1BgClip;
 
 void virtuappu_mode1_set_bg_clip(int bg_index, const VirtuaPPUMode1BgClip *clip);
