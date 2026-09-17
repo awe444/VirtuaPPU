@@ -106,14 +106,27 @@ void virtuappu_mode2_render_frame(const PPUMemory *ppu)
                 int rel_line = line;
 
                 if (clip != NULL) {
+                    /* The coordinate re-basing is kept in both cases: it is
+                     * what puts the image where the authored 240x160 screen
+                     * would have. Only the painted *extent* differs. */
                     rel_line = line - clip->offset_y;
-                    if (rel_line < 0 || rel_line >= clip->content_height) {
-                        goto affine_done; /* whole line outside: leave backdrop */
+                    if (clip->affine_paint_full_frame) {
+                        /* A full-screen cinematic: draw the transform
+                         * wherever it lands. Samples beyond the artwork hit
+                         * blank tiles and are skipped below as transparent,
+                         * so this adds the magnified image's off-box pixels
+                         * and nothing else. See VirtuaPPUMode1BgClip. */
+                        clip_left = 0;
+                        clip_right = MODE1_GBA_WIDTH;
+                    } else {
+                        if (rel_line < 0 || rel_line >= clip->content_height) {
+                            goto affine_done; /* whole line outside: leave backdrop */
+                        }
+                        clip_left = clip->offset_x;
+                        clip_right = clip->offset_x + clip->content_width;
+                        if (clip_left < 0) clip_left = 0;
+                        if (clip_right > MODE1_GBA_WIDTH) clip_right = MODE1_GBA_WIDTH;
                     }
-                    clip_left = clip->offset_x;
-                    clip_right = clip->offset_x + clip->content_width;
-                    if (clip_left < 0) clip_left = 0;
-                    if (clip_right > MODE1_GBA_WIDTH) clip_right = MODE1_GBA_WIDTH;
                 }
 
             /* Per-scanline DMA to BG2X/BG2Y replaces the reference the PPU
